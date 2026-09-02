@@ -1,81 +1,137 @@
-// Renders a string to a canvas texture, then builds a three.js object with real volume by
-// stacking many copies of that texture's alpha-cutout shape along the depth axis. Since every
-// layer shares the exact same silhouette, the stack forms a true extruded prism of the text
-// shape (like a thick plaque) without needing per-glyph vector font data — which matters here
-// because vector text geometry (THREE.TextGeometry) has no built-in Japanese glyph support,
-// while canvas text rendering uses whatever fonts the device already has.
+// Builds real 3D solid text (not a flat texture) by parsing actual glyph outlines from a bundled
+// font file and extruding them with three.js. A vector outline gives crisp edges at any size and
+// a single continuous volume, unlike the earlier canvas-texture + stacked-layers approach, whose
+// many overlapping semi-transparent planes both blurred edges and made opacity compound far
+// beyond the intended value. The bundled font is a subset of Noto Sans JP -- ASCII, kana, and the
+// ~3000 Jouyou/Kyoiku-use kanji -- keeping the download small while covering ordinary Japanese
+// input; a character outside that set won't render.
 import * as THREE from 'three'
+import opentype from 'opentype.js'
 
-const FONT_FAMILY = "'Hiragino Sans', 'Yu Gothic', 'Noto Sans JP', sans-serif"
+import fontUrl from './assets/NotoSansJP-subset.otf?url'
 
 export const TEXT_WORLD_HEIGHT = 5 // meters
-const TEXT_THICKNESS = TEXT_WORLD_HEIGHT * 0.12
-const TEXT_LAYERS = 14
-const TEXT_OVERALL_OPACITY = 0.9 // how opaque the letter should read as a whole, e.g. viewed head-on
+const TEXT_THICKNESS_RATIO = 0.12 // extrusion depth, as a fraction of worldHeight
+const TEXT_OVERALL_OPACITY = 0.9
 
-// Stacking TEXT_LAYERS semi-transparent surfaces compounds their opacity multiplicatively along
-// any viewing ray that passes through several of them (transmittance ≈ (1 - perLayerOpacity)^N)
-// -- at 0.9 per layer that compounds to fully opaque well before N=14, hiding the probe rod
-// completely instead of letting it show through faintly. Solving (1-p)^N = 1-TARGET for p gives
-// the per-layer opacity that reproduces the target overall opacity when viewed straight through
-// the whole stack, while parts of the rod behind only a few layers show through even more.
-const TEXT_LAYER_OPACITY = 1 - (1 - TEXT_OVERALL_OPACITY) ** (1 / TEXT_LAYERS)
-// alphaTest is compared against texture-alpha * material.opacity, so it must stay well below the
-// (now much lower) per-layer opacity or every layer would be discarded as if fully transparent.
-const TEXT_ALPHA_TEST = TEXT_LAYER_OPACITY * 0.3
-
-const createTextTexture = (text, {fontSize = 160, color = '#ff3b30'} = {}) => {
-  const canvas = document.createElement('canvas')
-  const ctx = canvas.getContext('2d')
-
-  ctx.font = `bold ${fontSize}px ${FONT_FAMILY}`
-  const padding = fontSize * 0.3
-  const metrics = ctx.measureText(text)
-  canvas.width = Math.ceil(metrics.width + padding * 2)
-  canvas.height = Math.ceil(fontSize * 1.4 + padding * 2)
-
-  // Sizing the canvas resets its context, so the font must be re-applied.
-  ctx.font = `bold ${fontSize}px ${FONT_FAMILY}`
-  ctx.textBaseline = 'middle'
-  ctx.textAlign = 'center'
-  ctx.fillStyle = color
-  ctx.fillText(text, canvas.width / 2, canvas.height / 2)
-
-  const texture = new THREE.CanvasTexture(canvas)
-  texture.needsUpdate = true
-  return {texture, aspect: canvas.width / canvas.height}
+let fontPromise = null
+export const loadFont = () => {
+  if (!fontPromise) {
+    fontPromise = fetch(fontUrl)
+      .then((res) => res.arrayBuffer())
+      .then((buffer) => opentype.parse(buffer))
+  }
+  return fontPromise
 }
 
-// Builds a group showing `text` as a thick, shadow-casting object sized so its world-space
-// height is `worldHeight` meters. The group is centered on X/Z with its bottom at local y=0,
-// so placing it at a ground hit point sits it directly on the ground.
-export const createTextMesh = (text, {worldHeight = TEXT_WORLD_HEIGHT, color = '#ff3b30'} = {}) => {
-  const {texture, aspect} = createTextTexture(text, {color})
-  const width = worldHeight * aspect
-
-  const geometry = new THREE.PlaneGeometry(width, worldHeight)
-  const material = new THREE.MeshStandardMaterial({
-    map: texture,
-    transparent: true,
-    opacity: TEXT_LAYER_OPACITY,
-    alphaTest: TEXT_ALPHA_TEST, // cuts away the fully transparent canvas background so layers form a clean extrusion
-    side: THREE.DoubleSide,
-    roughness: 0.6,
-    // Without this, one layer's depth write can make sibling layers at nearly the same depth
-    // fail the depth test and get skipped entirely, so far fewer than 14 layers actually
-    // contribute to the blend and the whole stack ends up much more see-through than intended.
-    depthWrite: false,
+// Splits an opentype.js path into its individual closed contours, converting each to a
+// three.js Path so its point-based signed area can be measured. In this font's outlines, a
+// negative signed area is a solid (fillable) contour and a positive one is a hole -- empirically
+// verified against a character with a nested hole (回), which produced alternating signs at each
+// nesting level.
+const contoursOf = (otPath) => {
+  const contours = []
+  let current = null
+  otPath.commands.forEach((cmd) => {
+    if (cmd.type === 'M') {
+      current = new THREE.Path()
+      contours.push(current)
+    }
+    if (!current) {
+      return
+    }
+    if (cmd.type === 'M') current.moveTo(cmd.x, cmd.y)
+    else if (cmd.type === 'L') current.lineTo(cmd.x, cmd.y)
+    else if (cmd.type === 'C') current.bezierCurveTo(cmd.x1, cmd.y1, cmd.x2, cmd.y2, cmd.x, cmd.y)
+    else if (cmd.type === 'Q') current.quadraticCurveTo(cmd.x1, cmd.y1, cmd.x, cmd.y)
   })
+  return contours.map((path) => {
+    const points = path.getPoints()
+    let area = 0
+    for (let i = 0; i < points.length; i += 1) {
+      const a = points[i]
+      const b = points[(i + 1) % points.length]
+      area += a.x * b.y - b.x * a.y
+    }
+    return {points, area: area / 2}
+  })
+}
+
+const pointInPolygon = (point, polygon) => {
+  let inside = false
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
+    const a = polygon[i]
+    const b = polygon[j]
+    const crosses = a.y > point.y !== b.y > point.y
+    if (crosses && point.x < ((b.x - a.x) * (point.y - a.y)) / (b.y - a.y) + a.x) {
+      inside = !inside
+    }
+  }
+  return inside
+}
+
+// Converts a run of text's glyph outlines into extrudable shapes, attaching each hole contour to
+// whichever solid contour geometrically contains it (so e.g. 回's inner solid square sits inside
+// its outer frame's hole as its own shape, rather than being merged into one).
+const pathToShapes = (otPath) => {
+  const contours = contoursOf(otPath)
+  const solids = contours.filter((c) => c.area < 0).map((c) => ({shape: new THREE.Shape(c.points), points: c.points}))
+  contours
+    .filter((c) => c.area >= 0)
+    .forEach((hole) => {
+      const owner = solids.find((s) => pointInPolygon(hole.points[0], s.points))
+      if (owner) {
+        owner.shape.holes.push(new THREE.Path(hole.points))
+      }
+    })
+  return solids.map((s) => s.shape)
+}
+
+// Builds a group showing `text` as a solid, shadow-casting 3D object sized so its world-space
+// height is `worldHeight` meters. The group is centered on X/Z with its bottom at local y=0, so
+// placing it at a ground hit point sits it directly on the ground.
+export const createTextMesh = async (text, {worldHeight = TEXT_WORLD_HEIGHT, color = '#ff3b30'} = {}) => {
+  const font = await loadFont()
+  const otPath = font.getPath(text, 0, 0, 1) // fontSize=1 -> coordinates are fractions of an em
+  const shapes = pathToShapes(otPath)
 
   const group = new THREE.Group()
-  for (let i = 0; i < TEXT_LAYERS; i += 1) {
-    const layer = new THREE.Mesh(geometry, material)
-    layer.position.z = -TEXT_THICKNESS / 2 + (TEXT_THICKNESS * i) / (TEXT_LAYERS - 1)
-    layer.position.y = worldHeight / 2
-    layer.castShadow = true
-    layer.receiveShadow = true
-    group.add(layer)
+  if (shapes.length === 0) {
+    return group // e.g. blank input, or a glyph outside the bundled font's coverage
   }
+
+  const box = otPath.getBoundingBox()
+  const emHeight = box.y2 - box.y1
+  const scale = worldHeight / emHeight
+
+  const geometry = new THREE.ExtrudeGeometry(shapes, {
+    depth: emHeight * TEXT_THICKNESS_RATIO,
+    bevelEnabled: false,
+  })
+  // opentype.js paths are Y-down (like a canvas); flipping Y here both corrects that and applies
+  // the em-units-to-meters scale in one step.
+  geometry.scale(scale, -scale, scale)
+  geometry.computeBoundingBox()
+  const bounds = geometry.boundingBox
+  geometry.translate(
+    -(bounds.min.x + bounds.max.x) / 2,
+    -bounds.min.y,
+    -(bounds.min.z + bounds.max.z) / 2
+  )
+
+  const material = new THREE.MeshStandardMaterial({
+    color,
+    transparent: true,
+    opacity: TEXT_OVERALL_OPACITY,
+    side: THREE.DoubleSide,
+    roughness: 0.6,
+    depthWrite: false, // lets whatever's behind (e.g. the probe rod) still show through faintly
+  })
+
+  const mesh = new THREE.Mesh(geometry, material)
+  mesh.castShadow = true
+  mesh.receiveShadow = true
+  group.add(mesh)
 
   return group
 }

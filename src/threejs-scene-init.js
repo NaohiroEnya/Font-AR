@@ -4,7 +4,7 @@
 // DeviceOrientation-only approach, which can only react to tilt, not real-world position.
 import * as THREE from 'three'
 
-import {createTextMesh} from './text-plane'
+import {createTextMesh, loadFont} from './text-plane'
 
 const PROBE_RADIUS = 0.07 // meters -- thick enough to read clearly on a phone screen
 const PROBE_LENGTH = 4.5
@@ -52,8 +52,8 @@ export const initScenePipelineModule = () => {
 
   const getInputText = () => document.getElementById('text-input').value.trim() || 'AR'
 
-  const placeTextAt = ({scene, camera}, point) => {
-    const group = createTextMesh(getInputText())
+  const placeTextAt = async ({scene, camera}, point) => {
+    const group = await createTextMesh(getInputText())
     group.position.copy(point)
     group.quaternion.copy(camera.quaternion) // face the viewer at the moment it's placed
     scene.add(group)
@@ -95,6 +95,7 @@ export const initScenePipelineModule = () => {
     onStart: ({canvas}) => {
       const {scene, camera, renderer} = XR8.Threejs.xrScene()
       liveCamera = camera
+      loadFont() // kick off the font fetch/parse now, so it's likely ready by the first tap
 
       initXrScene({scene, camera, renderer})
 
@@ -106,7 +107,7 @@ export const initScenePipelineModule = () => {
         {origin: camera.position, facing: camera.quaternion}
       )
 
-      canvas.addEventListener('touchstart', (event) => {
+      canvas.addEventListener('touchstart', async (event) => {
         if (event.touches.length !== 1) {
           return
         }
@@ -125,7 +126,7 @@ export const initScenePipelineModule = () => {
 
         const [groundHit] = raycaster.intersectObject(ground)
         if (groundHit) {
-          placeTextAt({scene, camera}, groundHit.point)
+          await placeTextAt({scene, camera}, groundHit.point)
         }
       }, true)
     },
