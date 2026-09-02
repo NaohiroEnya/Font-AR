@@ -191,56 +191,65 @@ export const initScenePipelineModule = () => {
   let lastTouching = null
   const statusEl = document.getElementById('contact-status')
 
-  const updateContactStatus = () => {
-    const touching = isRodTouchingAnyText()
-    if (touching === lastTouching) {
+  // `safe` covers both real contact with a text's solid volume and contact with one of its
+  // start/goal markers -- the markers are part of the course by definition, not just a
+  // geometric coincidence of sitting next to the text, so touching one always counts.
+  const updateContactStatus = (safe) => {
+    if (safe === lastTouching) {
       return
     }
-    lastTouching = touching
-    statusEl.textContent = touching ? 'SAFE' : 'OUT'
-    statusEl.classList.toggle('safe', touching)
-    statusEl.classList.toggle('out', !touching)
+    lastTouching = safe
+    statusEl.textContent = safe ? 'SAFE' : 'OUT'
+    statusEl.classList.toggle('safe', safe)
+    statusEl.classList.toggle('out', !safe)
   }
 
   // Run state: touching any start marker (re)starts the clock; touching any goal marker while
-  // running stops it and freezes the elapsed time. Goal touches are ignored before a run has
-  // started. With multiple texts placed at once, any start/goal works interchangeably for now --
-  // there's no per-text course tracking yet.
-  let runState = 'idle' // 'idle' | 'running' | 'cleared'
+  // running stops it and freezes the elapsed time as a clear. Losing safe contact while running
+  // ends the run as a game over instead. Goal touches are ignored before a run has started, and
+  // from 'cleared'/'gameover' only touching start again begins a fresh run. With multiple texts
+  // placed at once, any start/goal/text works interchangeably for now -- there's no per-text
+  // course tracking yet.
+  let runState = 'idle' // 'idle' | 'running' | 'cleared' | 'gameover'
   let runStartedAt = 0
-  let clearedElapsedMs = 0
+  let finalElapsedMs = 0
   const timerEl = document.getElementById('timer-status')
 
   const formatSeconds = (ms) => (ms / 1000).toFixed(1) + 's'
   let lastTimerText = null
 
-  const setTimerText = (text, cleared) => {
+  const setTimerText = (text, className) => {
     if (text === lastTimerText) {
       return // avoid rewriting the DOM every frame while the displayed value hasn't changed
     }
     lastTimerText = text
     timerEl.textContent = text
-    timerEl.classList.toggle('cleared', cleared)
+    timerEl.classList.remove('cleared', 'gameover')
+    if (className) {
+      timerEl.classList.add(className)
+    }
   }
 
-  const updateRunState = () => {
-    const touchingStart = placedTexts.some((group) => isRodTouchingMarker(rodLine, group.userData.startMarker))
-    const touchingGoal = placedTexts.some((group) => isRodTouchingMarker(rodLine, group.userData.goalMarker))
-
+  const updateRunState = (safe, touchingStart, touchingGoal) => {
     if (touchingStart) {
       runState = 'running'
       runStartedAt = performance.now()
     } else if (touchingGoal && runState === 'running') {
       runState = 'cleared'
-      clearedElapsedMs = performance.now() - runStartedAt
+      finalElapsedMs = performance.now() - runStartedAt
+    } else if (runState === 'running' && !safe) {
+      runState = 'gameover'
+      finalElapsedMs = performance.now() - runStartedAt
     }
 
     if (runState === 'idle') {
-      setTimerText('スタートに触れて計測開始', false)
+      setTimerText('スタートに触れて計測開始', null)
     } else if (runState === 'running') {
-      setTimerText(formatSeconds(performance.now() - runStartedAt), false)
+      setTimerText(formatSeconds(performance.now() - runStartedAt), null)
+    } else if (runState === 'cleared') {
+      setTimerText(`CLEAR! ${formatSeconds(finalElapsedMs)}`, 'cleared')
     } else {
-      setTimerText(`CLEAR! ${formatSeconds(clearedElapsedMs)}`, true)
+      setTimerText(`GAME OVER (${formatSeconds(finalElapsedMs)})`, 'gameover')
     }
   }
 
@@ -297,8 +306,14 @@ export const initScenePipelineModule = () => {
       probeRod.position.copy(liveCamera.position)
       probeRod.quaternion.copy(liveCamera.quaternion)
       updateRodSegment(liveCamera)
-      updateContactStatus()
-      updateRunState()
+
+      const touchingStart = placedTexts.some((group) => isRodTouchingMarker(rodLine, group.userData.startMarker))
+      const touchingGoal = placedTexts.some((group) => isRodTouchingMarker(rodLine, group.userData.goalMarker))
+      // Short-circuits before the more expensive sampled text check when a marker is already touched.
+      const safe = touchingStart || touchingGoal || isRodTouchingAnyText()
+
+      updateContactStatus(safe)
+      updateRunState(safe, touchingStart, touchingGoal)
     },
   }
 }

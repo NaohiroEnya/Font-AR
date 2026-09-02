@@ -88,3 +88,7 @@ body {
 #timer-status.cleared {
   background: rgba(173, 80, 255, 0.9);
 }
+
+#timer-status.gameover {
+  background: rgba(200, 40, 40, 0.92);
+}

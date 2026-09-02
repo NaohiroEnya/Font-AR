@@ -13,7 +13,9 @@ import fontUrl from './assets/NotoSansJP-subset.otf?url'
 export const TEXT_WORLD_HEIGHT = 2.5 // meters
 const TEXT_THICKNESS_RATIO = 0.12 // extrusion depth, as a fraction of worldHeight
 const TEXT_OVERALL_OPACITY = 0.8
-const MARKER_MARGIN = 0.15 // meters beyond the text's left/right edge, for start/goal markers
+const MARKER_EMBED = 0.08 // meters the start/goal markers sit inside the text's left/right edge,
+                          // so they're adjacent to (overlapping) the text rather than floating
+                          // just outside it
 
 let fontPromise = null
 export const loadFont = () => {
@@ -134,14 +136,35 @@ export const createTextMesh = async (text, {worldHeight = TEXT_WORLD_HEIGHT, col
   mesh.receiveShadow = true
   group.add(mesh)
 
-  // Local-space points just beyond the text's left/right edges, in reading order -- the caller
+  // Local-space points just inside the text's left/right edges, in reading order -- the caller
   // uses these to place start/goal markers as children of this same group, so they automatically
-  // follow wherever the text is placed and rotated without any extra transform math.
+  // follow wherever the text is placed and rotated without any extra transform math. Embedding
+  // them into the text (rather than floating just outside it) keeps them visually attached to it.
+  //
+  // The bounding box's min/max X aren't necessarily where the glyph actually has material at
+  // vertical-center height -- e.g. "A" is widest at its base, not its middle, so its bbox-left
+  // edge sits in open air once you're back up at center height. Raycasting inward from just
+  // outside the box at that height finds where the outline (the first/last character's edge, in
+  // reading order) actually is, falling back to the box edge if that particular scan misses.
   geometry.computeBoundingBox() // translate() above doesn't refresh the cached box itself
   const finalBounds = geometry.boundingBox
   const centerY = (finalBounds.min.y + finalBounds.max.y) / 2
-  group.userData.startLocal = new THREE.Vector3(finalBounds.min.x - MARKER_MARGIN, centerY, 0)
-  group.userData.goalLocal = new THREE.Vector3(finalBounds.max.x + MARKER_MARGIN, centerY, 0)
+  const width = finalBounds.max.x - finalBounds.min.x
+  const embed = Math.min(MARKER_EMBED, width / 4) // don't let start/goal cross for very narrow glyphs
+
+  const edgeRaycaster = new THREE.Raycaster()
+  const findEdgeX = (fromLeft) => {
+    const dir = new THREE.Vector3(fromLeft ? 1 : -1, 0, 0)
+    const startX = fromLeft ? finalBounds.min.x - 1 : finalBounds.max.x + 1
+    edgeRaycaster.set(new THREE.Vector3(startX, centerY, 0), dir)
+    const [hit] = edgeRaycaster.intersectObject(mesh, false)
+    return hit ? hit.point.x : (fromLeft ? finalBounds.min.x : finalBounds.max.x)
+  }
+  const leftEdgeX = findEdgeX(true)
+  const rightEdgeX = findEdgeX(false)
+
+  group.userData.startLocal = new THREE.Vector3(leftEdgeX + embed, centerY, 0)
+  group.userData.goalLocal = new THREE.Vector3(rightEdgeX - embed, centerY, 0)
 
   return group
 }
