@@ -6,20 +6,30 @@ import * as THREE from 'three'
 
 import {createTextMesh} from './text-plane'
 
-const PROBE_RADIUS = 0.03 // meters
-const PROBE_LENGTH = 5
+const PROBE_RADIUS = 0.07 // meters -- thick enough to read clearly on a phone screen
+const PROBE_LENGTH = 4.5
+const PROBE_NEAR = 0.2 // gap between the camera and the rod's near end, so small SLAM pose
+                        // jitter (which is magnified a lot for geometry right at the lens)
+                        // doesn't make the rod visibly shake
+const PROBE_Y_OFFSET = -0.45 // camera-local: shifts the whole rod down, so it reads as
+                             // emerging from the bottom-center of the screen rather than
+                             // dead-center, while staying perfectly parallel to the device
 
-// Builds the "operation game" probe: a thin rod fixed to the center of the screen, extending
-// forward from the device. It's added as a child of the camera, so its world position/rotation
-// is recomputed from the camera's every frame for free -- no manual per-frame syncing needed.
-// Because it's still a real object in the SLAM world-space scene, it visually pierces through
-// (or is occluded by) text placed in the room, exactly like probing through a real object.
+// Builds the "operation game" probe: a thin rod that always reads as emerging from the
+// bottom-center of the screen and running straight ahead, parallel to the device. Its geometry
+// is pre-offset (down + forward) so that syncing this mesh's position/quaternion directly to
+// the camera's every frame (see onUpdate below) reproduces that fixed screen position exactly,
+// with zero drift regardless of how the device rotates. It's flat-shaded (MeshBasicMaterial) so
+// it always reads as a solid, saturated blue instead of going dark when a lit material's visible
+// face happens to point away from the scene's fixed directional light. Because it's still a real
+// object in the SLAM world-space scene (not a 2D screen overlay), it visually pierces through
+// (or is occluded by) text placed in the room as the device moves through space.
 const createProbeRod = () => {
-  const geometry = new THREE.CylinderGeometry(PROBE_RADIUS, PROBE_RADIUS, PROBE_LENGTH, 16)
+  const geometry = new THREE.CylinderGeometry(PROBE_RADIUS, PROBE_RADIUS, PROBE_LENGTH, 20)
   geometry.rotateX(-Math.PI / 2) // cylinder's axis (Y) now points down the camera's forward axis (-Z)
-  const material = new THREE.MeshStandardMaterial({color: 0x2e86f5, roughness: 0.4, metalness: 0.1})
+  geometry.translate(0, PROBE_Y_OFFSET, -(PROBE_NEAR + PROBE_LENGTH / 2))
+  const material = new THREE.MeshBasicMaterial({color: 0x2979ff})
   const rod = new THREE.Mesh(geometry, material)
-  rod.position.z = -PROBE_LENGTH / 2
   rod.castShadow = true
   return rod
 }
@@ -38,6 +48,7 @@ export const initScenePipelineModule = () => {
   const raycaster = new THREE.Raycaster()
   const pointer = new THREE.Vector2()
   const placedTexts = [] // groups currently placed in the scene, for tap-to-delete
+  const probeRod = createProbeRod()
 
   const getInputText = () => document.getElementById('text-input').value.trim() || 'AR'
 
@@ -57,7 +68,7 @@ export const initScenePipelineModule = () => {
   const initXrScene = ({scene, camera, renderer}) => {
     renderer.shadowMap.enabled = true
     scene.add(ground)
-    camera.add(createProbeRod())
+    scene.add(probeRod)
 
     const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2)
     directionalLight.position.set(3, 6, 4)
@@ -76,11 +87,14 @@ export const initScenePipelineModule = () => {
     camera.position.set(0, 2, 2)
   }
 
+  let liveCamera = null
+
   return {
     name: 'textplacement',
 
     onStart: ({canvas}) => {
       const {scene, camera, renderer} = XR8.Threejs.xrScene()
+      liveCamera = camera
 
       initXrScene({scene, camera, renderer})
 
@@ -114,6 +128,18 @@ export const initScenePipelineModule = () => {
           placeTextAt({scene, camera}, groundHit.point)
         }
       }, true)
+    },
+
+    // Runs every processed camera frame. Explicitly re-copying the live camera's transform here
+    // (rather than relying on the rod being a child of the camera object) keeps the rod's
+    // fixed relationship to the device correct even if anything about the camera object's
+    // internal update path changes over the session.
+    onUpdate: () => {
+      if (!liveCamera) {
+        return
+      }
+      probeRod.position.copy(liveCamera.position)
+      probeRod.quaternion.copy(liveCamera.quaternion)
     },
   }
 }
