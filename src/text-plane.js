@@ -10,9 +10,9 @@ import opentype from 'opentype.js'
 
 import fontUrl from './assets/NotoSansJP-subset.otf?url'
 
-export const TEXT_WORLD_HEIGHT = 5 // meters
+export const TEXT_WORLD_HEIGHT = 2.5 // meters
 const TEXT_THICKNESS_RATIO = 0.12 // extrusion depth, as a fraction of worldHeight
-const TEXT_OVERALL_OPACITY = 0.9
+const TEXT_OVERALL_OPACITY = 0.8
 
 let fontPromise = null
 export const loadFont = () => {
