@@ -14,6 +14,9 @@ const PROBE_NEAR = 0.2 // gap between the camera and the rod's near end, so smal
 const PROBE_Y_OFFSET = -0.45 // camera-local: shifts the whole rod down, so it reads as
                              // emerging from the bottom-center of the screen rather than
                              // dead-center, while staying perfectly parallel to the device
+const CONTACT_SAMPLE_STEP = 0.15 // meters between points sampled along the rod each frame when
+                                  // checking for contact -- roughly the rod's own diameter, so a
+                                  // touch shouldn't be able to slip between two sample points
 
 // Builds the "operation game" probe: a thin rod that always reads as emerging from the
 // bottom-center of the screen and running straight ahead, parallel to the device. Its geometry
@@ -34,6 +37,20 @@ const createProbeRod = () => {
   return rod
 }
 
+// Casts a ray from `point` and counts how many times it crosses `mesh`. An odd count means the
+// point is inside the mesh's solid volume -- true for a ray in any fixed direction through a
+// closed (watertight) manifold, which is what THREE.ExtrudeGeometry produces, so this works
+// regardless of how the text has been rotated to face the camera. The direction is tilted
+// slightly off any axis (rather than a plain "straight up") so it doesn't graze exactly along a
+// triangle edge or through a shared vertex -- which, for symmetric glyphs like 回, a purely
+// vertical ray through the horizontal center reliably does, double-counting that crossing.
+const CAST_DIR = new THREE.Vector3(0.0173, 1, 0.0111).normalize()
+const pointRaycaster = new THREE.Raycaster()
+const isPointInsideMesh = (point, mesh) => {
+  pointRaycaster.set(point, CAST_DIR)
+  return pointRaycaster.intersectObject(mesh, false).length % 2 === 1
+}
+
 export const initScenePipelineModule = () => {
   // Plane used both as the raycast target for tap placement and as a shadow-catcher: it's
   // invisible except where a placed text object blocks the light, so text reads as sitting on
@@ -48,6 +65,7 @@ export const initScenePipelineModule = () => {
   const raycaster = new THREE.Raycaster()
   const pointer = new THREE.Vector2()
   const placedTexts = [] // groups currently placed in the scene, for tap-to-delete
+  const textBoxes = new Map() // group -> world-space Box3, cached once since placed text doesn't move
   const probeRod = createProbeRod()
 
   const getInputText = () => document.getElementById('text-input').value.trim() || 'AR'
@@ -58,11 +76,36 @@ export const initScenePipelineModule = () => {
     group.quaternion.copy(camera.quaternion) // face the viewer at the moment it's placed
     scene.add(group)
     placedTexts.push(group)
+    textBoxes.set(group, new THREE.Box3().setFromObject(group))
   }
 
   const removeText = (scene, group) => {
     scene.remove(group)
     placedTexts.splice(placedTexts.indexOf(group), 1)
+    textBoxes.delete(group)
+  }
+
+  // Samples points along the rod's current world-space centerline and checks each one (cheaply,
+  // via its cached bounding box first) against every placed text's actual solid volume.
+  const rodNearLocal = new THREE.Vector3(0, PROBE_Y_OFFSET, -PROBE_NEAR)
+  const rodFarLocal = new THREE.Vector3(0, PROBE_Y_OFFSET, -(PROBE_NEAR + PROBE_LENGTH))
+  const sampleCount = Math.ceil(PROBE_LENGTH / CONTACT_SAMPLE_STEP)
+  const isRodTouchingAnyText = (camera) => {
+    const near = rodNearLocal.clone().applyQuaternion(camera.quaternion).add(camera.position)
+    const far = rodFarLocal.clone().applyQuaternion(camera.quaternion).add(camera.position)
+    const point = new THREE.Vector3()
+
+    for (let i = 0; i <= sampleCount; i += 1) {
+      point.lerpVectors(near, far, i / sampleCount)
+      for (const group of placedTexts) {
+        const mesh = group.children[0]
+        if (!mesh) continue // empty group, e.g. blank input
+        if (textBoxes.get(group).containsPoint(point) && isPointInsideMesh(point, mesh)) {
+          return true
+        }
+      }
+    }
+    return false
   }
 
   const initXrScene = ({scene, camera, renderer}) => {
@@ -88,6 +131,19 @@ export const initScenePipelineModule = () => {
   }
 
   let liveCamera = null
+  let lastTouching = null
+  const statusEl = document.getElementById('contact-status')
+
+  const updateContactStatus = (camera) => {
+    const touching = isRodTouchingAnyText(camera)
+    if (touching === lastTouching) {
+      return
+    }
+    lastTouching = touching
+    statusEl.textContent = touching ? 'SAFE' : 'OUT'
+    statusEl.classList.toggle('safe', touching)
+    statusEl.classList.toggle('out', !touching)
+  }
 
   return {
     name: 'textplacement',
@@ -141,6 +197,7 @@ export const initScenePipelineModule = () => {
       }
       probeRod.position.copy(liveCamera.position)
       probeRod.quaternion.copy(liveCamera.quaternion)
+      updateContactStatus(liveCamera)
     },
   }
 }

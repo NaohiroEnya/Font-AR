@@ -41,3 +41,28 @@ body {
   border-radius: 8px;
   font-size: 16px;
 }
+
+#contact-status {
+  position: fixed;
+  top: calc(16px + env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  padding: 10px 32px;
+  border-radius: 999px;
+  font-size: 20px;
+  font-weight: bold;
+  letter-spacing: 0.08em;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  transition: background-color 0.1s ease;
+  pointer-events: none;
+}
+
+#contact-status.safe {
+  background: rgba(47, 163, 107, 0.9);
+}
+
+#contact-status.out {
+  background: rgba(224, 102, 61, 0.9);
+}
