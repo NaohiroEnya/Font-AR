@@ -7,10 +7,15 @@ import * as THREE from 'three'
 import {createTextMesh} from './text-plane'
 
 export const initScenePipelineModule = () => {
-  // Invisible plane used only as a raycast target to find where the ground was tapped.
+  // Plane used both as the raycast target for tap placement and as a shadow-catcher: it's
+  // invisible except where a placed text object blocks the light, so text reads as sitting on
+  // the ground rather than floating.
   const groundGeometry = new THREE.PlaneGeometry(2000, 2000)
   groundGeometry.rotateX(-Math.PI / 2)
-  const ground = new THREE.Mesh(groundGeometry, new THREE.MeshBasicMaterial({visible: false}))
+  const groundMaterial = new THREE.ShadowMaterial()
+  groundMaterial.opacity = 0.35
+  const ground = new THREE.Mesh(groundGeometry, groundMaterial)
+  ground.receiveShadow = true
 
   const raycaster = new THREE.Raycaster()
   const pointer = new THREE.Vector2()
@@ -18,15 +23,30 @@ export const initScenePipelineModule = () => {
   const getInputText = () => document.getElementById('text-input').value.trim() || 'AR'
 
   const placeTextAt = ({scene, camera}, point) => {
-    const mesh = createTextMesh(getInputText())
-    mesh.position.copy(point)
-    mesh.position.y += 0.25 // lift text above the ground plane
-    mesh.quaternion.copy(camera.quaternion) // face the viewer at the moment it's placed
-    scene.add(mesh)
+    const group = createTextMesh(getInputText())
+    group.position.copy(point)
+    group.quaternion.copy(camera.quaternion) // face the viewer at the moment it's placed
+    scene.add(group)
   }
 
-  const initXrScene = ({scene, camera}) => {
+  const initXrScene = ({scene, camera, renderer}) => {
+    renderer.shadowMap.enabled = true
     scene.add(ground)
+
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2)
+    directionalLight.position.set(3, 6, 4)
+    directionalLight.castShadow = true
+    directionalLight.shadow.mapSize.set(2048, 2048)
+    const shadowCam = directionalLight.shadow.camera
+    shadowCam.left = -10
+    shadowCam.right = 10
+    shadowCam.top = 10
+    shadowCam.bottom = -10
+    shadowCam.far = 30
+    shadowCam.updateProjectionMatrix()
+    scene.add(directionalLight)
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6))
+
     camera.position.set(0, 2, 2)
   }
 
