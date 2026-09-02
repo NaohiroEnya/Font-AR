@@ -52,6 +52,7 @@ const isPointInsideMesh = (point, mesh) => {
 }
 
 const MARKER_RADIUS = 0.12
+const MARKER_TOUCH_DISTANCE = MARKER_RADIUS + PROBE_RADIUS
 const createMarker = (color) => {
   const mesh = new THREE.Mesh(
     new THREE.SphereGeometry(MARKER_RADIUS, 16, 16),
@@ -64,7 +65,8 @@ const createMarker = (color) => {
 // Adds start (green) / goal (red) markers as children of `group`, at the local points
 // text-plane.js already worked out (just beyond the text's left/right edge). As children they
 // automatically follow the group's placement and facing -- no extra transform math needed here,
-// and they're removed along with the text for free when the group is deleted.
+// and they're removed along with the text for free when the group is deleted. References are
+// kept on userData so the run-timer logic can find them later without re-traversing children.
 const addStartGoalMarkers = (group) => {
   const {startLocal, goalLocal} = group.userData
   if (!startLocal || !goalLocal) {
@@ -73,10 +75,27 @@ const addStartGoalMarkers = (group) => {
   const start = createMarker(0x2fa36b)
   start.position.copy(startLocal)
   group.add(start)
+  group.userData.startMarker = start
 
   const goal = createMarker(0xe0663d)
   goal.position.copy(goalLocal)
   group.add(goal)
+  group.userData.goalMarker = goal
+}
+
+// True if the rod's current segment [near, far] passes within touching distance of `marker`.
+// Uses the exact closest point on the segment rather than discrete sampling (unlike the text
+// contact check) since a sphere-vs-segment distance has a simple closed form -- no need to
+// approximate a solid volume here.
+const markerWorldPos = new THREE.Vector3()
+const closestOnRod = new THREE.Vector3()
+const isRodTouchingMarker = (rodLine, marker) => {
+  if (!marker) {
+    return false
+  }
+  marker.getWorldPosition(markerWorldPos)
+  rodLine.closestPointToPoint(markerWorldPos, true, closestOnRod)
+  return closestOnRod.distanceTo(markerWorldPos) <= MARKER_TOUCH_DISTANCE
 }
 
 export const initScenePipelineModule = () => {
@@ -114,18 +133,27 @@ export const initScenePipelineModule = () => {
     textBoxes.delete(group)
   }
 
-  // Samples points along the rod's current world-space centerline and checks each one (cheaply,
-  // via its cached bounding box first) against every placed text's actual solid volume.
+  // Recomputes the rod's current world-space centerline from the live camera each frame. Shared
+  // by both the text-contact check (sampled) and the marker-contact check (exact), so the
+  // camera's position/quaternion only need to be applied once per frame.
   const rodNearLocal = new THREE.Vector3(0, PROBE_Y_OFFSET, -PROBE_NEAR)
   const rodFarLocal = new THREE.Vector3(0, PROBE_Y_OFFSET, -(PROBE_NEAR + PROBE_LENGTH))
+  const rodNear = new THREE.Vector3()
+  const rodFar = new THREE.Vector3()
+  const rodLine = new THREE.Line3(rodNear, rodFar)
+  const updateRodSegment = (camera) => {
+    rodNear.copy(rodNearLocal).applyQuaternion(camera.quaternion).add(camera.position)
+    rodFar.copy(rodFarLocal).applyQuaternion(camera.quaternion).add(camera.position)
+  }
+
+  // Samples points along the rod segment and checks each one (cheaply, via its cached bounding
+  // box first) against every placed text's actual solid volume.
   const sampleCount = Math.ceil(PROBE_LENGTH / CONTACT_SAMPLE_STEP)
-  const isRodTouchingAnyText = (camera) => {
-    const near = rodNearLocal.clone().applyQuaternion(camera.quaternion).add(camera.position)
-    const far = rodFarLocal.clone().applyQuaternion(camera.quaternion).add(camera.position)
+  const isRodTouchingAnyText = () => {
     const point = new THREE.Vector3()
 
     for (let i = 0; i <= sampleCount; i += 1) {
-      point.lerpVectors(near, far, i / sampleCount)
+      point.lerpVectors(rodNear, rodFar, i / sampleCount)
       for (const group of placedTexts) {
         const mesh = group.children[0]
         if (!mesh) continue // empty group, e.g. blank input
@@ -163,8 +191,8 @@ export const initScenePipelineModule = () => {
   let lastTouching = null
   const statusEl = document.getElementById('contact-status')
 
-  const updateContactStatus = (camera) => {
-    const touching = isRodTouchingAnyText(camera)
+  const updateContactStatus = () => {
+    const touching = isRodTouchingAnyText()
     if (touching === lastTouching) {
       return
     }
@@ -172,6 +200,48 @@ export const initScenePipelineModule = () => {
     statusEl.textContent = touching ? 'SAFE' : 'OUT'
     statusEl.classList.toggle('safe', touching)
     statusEl.classList.toggle('out', !touching)
+  }
+
+  // Run state: touching any start marker (re)starts the clock; touching any goal marker while
+  // running stops it and freezes the elapsed time. Goal touches are ignored before a run has
+  // started. With multiple texts placed at once, any start/goal works interchangeably for now --
+  // there's no per-text course tracking yet.
+  let runState = 'idle' // 'idle' | 'running' | 'cleared'
+  let runStartedAt = 0
+  let clearedElapsedMs = 0
+  const timerEl = document.getElementById('timer-status')
+
+  const formatSeconds = (ms) => (ms / 1000).toFixed(1) + 's'
+  let lastTimerText = null
+
+  const setTimerText = (text, cleared) => {
+    if (text === lastTimerText) {
+      return // avoid rewriting the DOM every frame while the displayed value hasn't changed
+    }
+    lastTimerText = text
+    timerEl.textContent = text
+    timerEl.classList.toggle('cleared', cleared)
+  }
+
+  const updateRunState = () => {
+    const touchingStart = placedTexts.some((group) => isRodTouchingMarker(rodLine, group.userData.startMarker))
+    const touchingGoal = placedTexts.some((group) => isRodTouchingMarker(rodLine, group.userData.goalMarker))
+
+    if (touchingStart) {
+      runState = 'running'
+      runStartedAt = performance.now()
+    } else if (touchingGoal && runState === 'running') {
+      runState = 'cleared'
+      clearedElapsedMs = performance.now() - runStartedAt
+    }
+
+    if (runState === 'idle') {
+      setTimerText('スタートに触れて計測開始', false)
+    } else if (runState === 'running') {
+      setTimerText(formatSeconds(performance.now() - runStartedAt), false)
+    } else {
+      setTimerText(`CLEAR! ${formatSeconds(clearedElapsedMs)}`, true)
+    }
   }
 
   return {
@@ -226,7 +296,9 @@ export const initScenePipelineModule = () => {
       }
       probeRod.position.copy(liveCamera.position)
       probeRod.quaternion.copy(liveCamera.quaternion)
-      updateContactStatus(liveCamera)
+      updateRodSegment(liveCamera)
+      updateContactStatus()
+      updateRunState()
     },
   }
 }
