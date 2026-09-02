@@ -51,6 +51,34 @@ const isPointInsideMesh = (point, mesh) => {
   return pointRaycaster.intersectObject(mesh, false).length % 2 === 1
 }
 
+const MARKER_RADIUS = 0.12
+const createMarker = (color) => {
+  const mesh = new THREE.Mesh(
+    new THREE.SphereGeometry(MARKER_RADIUS, 16, 16),
+    new THREE.MeshStandardMaterial({color, emissive: color, emissiveIntensity: 0.4})
+  )
+  mesh.castShadow = true
+  return mesh
+}
+
+// Adds start (green) / goal (red) markers as children of `group`, at the local points
+// text-plane.js already worked out (just beyond the text's left/right edge). As children they
+// automatically follow the group's placement and facing -- no extra transform math needed here,
+// and they're removed along with the text for free when the group is deleted.
+const addStartGoalMarkers = (group) => {
+  const {startLocal, goalLocal} = group.userData
+  if (!startLocal || !goalLocal) {
+    return // e.g. blank input, which produced an empty group
+  }
+  const start = createMarker(0x2fa36b)
+  start.position.copy(startLocal)
+  group.add(start)
+
+  const goal = createMarker(0xe0663d)
+  goal.position.copy(goalLocal)
+  group.add(goal)
+}
+
 export const initScenePipelineModule = () => {
   // Plane used both as the raycast target for tap placement and as a shadow-catcher: it's
   // invisible except where a placed text object blocks the light, so text reads as sitting on
@@ -74,6 +102,7 @@ export const initScenePipelineModule = () => {
     const group = await createTextMesh(getInputText())
     group.position.copy(point)
     group.quaternion.copy(camera.quaternion) // face the viewer at the moment it's placed
+    addStartGoalMarkers(group)
     scene.add(group)
     placedTexts.push(group)
     textBoxes.set(group, new THREE.Box3().setFromObject(group))

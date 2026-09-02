@@ -13,6 +13,7 @@ import fontUrl from './assets/NotoSansJP-subset.otf?url'
 export const TEXT_WORLD_HEIGHT = 2.5 // meters
 const TEXT_THICKNESS_RATIO = 0.12 // extrusion depth, as a fraction of worldHeight
 const TEXT_OVERALL_OPACITY = 0.8
+const MARKER_MARGIN = 0.15 // meters beyond the text's left/right edge, for start/goal markers
 
 let fontPromise = null
 export const loadFont = () => {
@@ -132,6 +133,15 @@ export const createTextMesh = async (text, {worldHeight = TEXT_WORLD_HEIGHT, col
   mesh.castShadow = true
   mesh.receiveShadow = true
   group.add(mesh)
+
+  // Local-space points just beyond the text's left/right edges, in reading order -- the caller
+  // uses these to place start/goal markers as children of this same group, so they automatically
+  // follow wherever the text is placed and rotated without any extra transform math.
+  geometry.computeBoundingBox() // translate() above doesn't refresh the cached box itself
+  const finalBounds = geometry.boundingBox
+  const centerY = (finalBounds.min.y + finalBounds.max.y) / 2
+  group.userData.startLocal = new THREE.Vector3(finalBounds.min.x - MARKER_MARGIN, centerY, 0)
+  group.userData.goalLocal = new THREE.Vector3(finalBounds.max.x + MARKER_MARGIN, centerY, 0)
 
   return group
 }
