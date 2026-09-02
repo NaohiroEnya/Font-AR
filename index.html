@@ -7,9 +7,12 @@
     <title>Font AR</title>
     <meta name="description" content="Webブラウザ上で、タップした場所に文字をAR空間で固定表示するプロトタイプ">
 
-    <script src="https://cdn.jsdelivr.net/npm/@8thwall/engine-binary@1/dist/xr.js" async crossorigin="anonymous" data-preload-chunks="slam"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@8thwall/xrextras@1/dist/xrextras.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@8thwall/landing-page@1/dist/landing-page.js" crossorigin="anonymous"></script>
+    <!-- Versions pinned exactly (not "@1") so jsdelivr never needs to re-resolve against the
+         npm registry at runtime -- it can serve these cached files even if the package is ever
+         unpublished or the @8thwall npm account disappears. -->
+    <script src="https://cdn.jsdelivr.net/npm/@8thwall/engine-binary@1.0.0/dist/xr.js" async crossorigin="anonymous" data-preload-chunks="slam"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@8thwall/xrextras@1.0.0/dist/xrextras.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@8thwall/landing-page@1.0.0/dist/landing-page.js" crossorigin="anonymous"></script>
 
     <link rel="stylesheet" href="src/index.css">
   </head>
