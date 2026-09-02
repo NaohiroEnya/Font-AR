@@ -22,10 +22,6 @@ const onxrloaded = () => {
   const canvas = document.getElementById('camerafeed')
   // Open the camera and start running the camera run loop.
   XR8.run({canvas})
-
-  document.getElementById('recenter-button').addEventListener('click', () => {
-    XR8.XrController.recenter()
-  })
 }
 
 window.XR8 ? onxrloaded() : window.addEventListener('xrloaded', onxrloaded)

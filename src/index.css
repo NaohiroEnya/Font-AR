@@ -41,13 +41,3 @@ body {
   border-radius: 8px;
   font-size: 16px;
 }
-
-#recenter-button {
-  padding: 10px 16px;
-  border: none;
-  border-radius: 8px;
-  background: #ad50ff;
-  color: #fff;
-  font-size: 14px;
-  white-space: nowrap;
-}
