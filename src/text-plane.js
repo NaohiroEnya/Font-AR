@@ -144,35 +144,54 @@ export const createTextMesh = async (text, {worldHeight = TEXT_WORLD_HEIGHT, col
   mesh.receiveShadow = true
   group.add(mesh)
 
-  // Local-space points just inside the text's left/right edges, in reading order -- the caller
-  // uses these to place start/goal markers as children of this same group, so they automatically
+  // Local-space points just inside the text's corners, placed diagonally opposite each other
+  // (start near the bottom-left, goal near the top-right) so the course spans the object's full
+  // footprint instead of a single straight line through its vertical center -- the caller uses
+  // these to place start/goal markers as children of this same group, so they automatically
   // follow wherever the text is placed and rotated without any extra transform math. Embedding
   // them into the text (rather than floating just outside it) keeps them visually attached to it.
   //
-  // The bounding box's min/max X aren't necessarily where the glyph actually has material at
-  // vertical-center height -- e.g. "A" is widest at its base, not its middle, so its bbox-left
-  // edge sits in open air once you're back up at center height. Raycasting inward from just
-  // outside the box at that height finds where the outline (the first/last character's edge, in
-  // reading order) actually is, falling back to the box edge if that particular scan misses.
+  // The bounding box's min/max X aren't necessarily where the glyph actually has material at a
+  // given height -- e.g. "A" is widest at its base, not its middle, so its bbox-left edge sits in
+  // open air away from its base. Raycasting inward from just outside the box at that height finds
+  // where the outline (the first/last character's edge, in reading order) actually is. Several
+  // candidate heights are tried, moving toward vertical-center, in case the corner height itself
+  // happens to miss the glyph entirely (e.g. a character with no material near one corner), and
+  // if every candidate misses, this falls back to the box's own corner.
   geometry.computeBoundingBox() // translate() above doesn't refresh the cached box itself
   const finalBounds = geometry.boundingBox
   const centerY = (finalBounds.min.y + finalBounds.max.y) / 2
+  const height = finalBounds.max.y - finalBounds.min.y
   const width = finalBounds.max.x - finalBounds.min.x
   const embed = Math.min(MARKER_EMBED, width / 4) // don't let start/goal cross for very narrow glyphs
+  const CORNER_INSET_RATIO = 0.18 // how far in from the top/bottom edge the diagonal corners sit
 
   const edgeRaycaster = new THREE.Raycaster()
-  const findEdgeX = (fromLeft) => {
+  const findEdgeXAt = (fromLeft, y) => {
     const dir = new THREE.Vector3(fromLeft ? 1 : -1, 0, 0)
     const startX = fromLeft ? finalBounds.min.x - 1 : finalBounds.max.x + 1
-    edgeRaycaster.set(new THREE.Vector3(startX, centerY, 0), dir)
+    edgeRaycaster.set(new THREE.Vector3(startX, y, 0), dir)
     const [hit] = edgeRaycaster.intersectObject(mesh, false)
-    return hit ? hit.point.x : (fromLeft ? finalBounds.min.x : finalBounds.max.x)
+    return hit ? hit.point.x : null
   }
-  const leftEdgeX = findEdgeX(true)
-  const rightEdgeX = findEdgeX(false)
+  // Tries the corner height first, then partway toward vertical-center, then center itself.
+  const findCornerX = (fromLeft, cornerY) => {
+    for (const y of [cornerY, (cornerY + centerY) / 2, centerY]) {
+      const x = findEdgeXAt(fromLeft, y)
+      if (x !== null) {
+        return {x, y}
+      }
+    }
+    return {x: fromLeft ? finalBounds.min.x : finalBounds.max.x, y: cornerY}
+  }
 
-  group.userData.startLocal = new THREE.Vector3(leftEdgeX + embed, centerY, 0)
-  group.userData.goalLocal = new THREE.Vector3(rightEdgeX - embed, centerY, 0)
+  const bottomY = finalBounds.min.y + height * CORNER_INSET_RATIO
+  const topY = finalBounds.max.y - height * CORNER_INSET_RATIO
+  const start = findCornerX(true, bottomY)
+  const goal = findCornerX(false, topY)
+
+  group.userData.startLocal = new THREE.Vector3(start.x + embed, start.y, 0)
+  group.userData.goalLocal = new THREE.Vector3(goal.x - embed, goal.y, 0)
 
   return group
 }
