@@ -96,22 +96,15 @@ const addStartGoalMarkers = (group) => {
 // Uses the exact closest point on the segment rather than discrete sampling (unlike the text
 // contact check) since a sphere-vs-segment distance has a simple closed form -- no need to
 // approximate a solid volume here.
-//
-// `scale` is the marker's owning group's current scale (from the resize slider): the marker mesh
-// itself shrinks/grows correctly as a scaled child, but MARKER_TOUCH_DISTANCE is a plain world-
-// space constant, so without this it stayed fixed at ~19cm regardless of how small the text (and
-// its marker) had been resized -- on a text shrunk to e.g. 0.3x, that left a "safe" halo several
-// times wider than the marker was actually drawn, matching contact only near the marker's default
-// size rather than however big it currently, visibly is.
 const markerWorldPos = new THREE.Vector3()
 const closestOnRod = new THREE.Vector3()
-const isRodTouchingMarker = (rodLine, marker, scale) => {
+const isRodTouchingMarker = (rodLine, marker) => {
   if (!marker) {
     return false
   }
   marker.getWorldPosition(markerWorldPos)
   rodLine.closestPointToPoint(markerWorldPos, true, closestOnRod)
-  return closestOnRod.distanceTo(markerWorldPos) <= MARKER_TOUCH_DISTANCE * scale
+  return closestOnRod.distanceTo(markerWorldPos) <= MARKER_TOUCH_DISTANCE
 }
 
 const SELECTION_RING_COLOR = 0x2979ff
@@ -174,10 +167,10 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
   //
   // Box3.setFromObject(mesh) internally does mesh.updateWorldMatrix(false, false) -- it refreshes
   // the mesh's own matrix but, unlike calling it on the group directly, does NOT walk up to
-  // refresh the group's matrixWorld first. Right after changing group.position/quaternion/scale
-  // (here, or in setSelectedScale/touchmove) nothing else has necessarily re-run a scene-wide
-  // matrix update yet, so that read the group's matrixWorld from before the change -- explicitly
-  // forcing the parent chain here first keeps this correct regardless of timing.
+  // refresh the group's matrixWorld first. Right after changing group.position (here, or via a
+  // touchmove drag) nothing else has necessarily re-run a scene-wide matrix update yet, so that
+  // read the group's matrixWorld from before the change -- explicitly forcing the parent chain
+  // here first keeps this correct regardless of timing.
   const refreshBox = (group) => {
     const mesh = group.children[0]
     if (mesh) {
@@ -234,14 +227,6 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
     if (onSelectionChange) {
       onSelectionChange(group)
     }
-  }
-
-  const setSelectedScale = (scale) => {
-    if (!selectedGroup) {
-      return
-    }
-    selectedGroup.scale.setScalar(scale)
-    refreshBox(selectedGroup) // the cached box is in world space, so a scale change invalidates it
   }
 
   const deleteSelected = () => {
@@ -465,8 +450,8 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
       probeRod.quaternion.copy(liveCamera.quaternion)
       updateRodSegment(liveCamera)
 
-      const touchingStart = placedTexts.some((group) => isRodTouchingMarker(rodLine, group.userData.startMarker, group.scale.x))
-      const touchingGoal = placedTexts.some((group) => isRodTouchingMarker(rodLine, group.userData.goalMarker, group.scale.x))
+      const touchingStart = placedTexts.some((group) => isRodTouchingMarker(rodLine, group.userData.startMarker))
+      const touchingGoal = placedTexts.some((group) => isRodTouchingMarker(rodLine, group.userData.goalMarker))
       // Short-circuits before the more expensive sampled text check when a marker is already touched.
       const safe = touchingStart || touchingGoal || isRodTouchingAnyText()
 
@@ -475,5 +460,5 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
     },
   }
 
-  return {pipelineModule, setSelectedScale, deleteSelected, deselect}
+  return {pipelineModule, deleteSelected, deselect}
 }
