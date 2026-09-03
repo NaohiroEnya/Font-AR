@@ -221,8 +221,10 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
 
   // Unlike scale, letter-spacing changes the glyph layout itself, so it can't be applied as a
   // transform on the existing mesh -- the whole group has to be rebuilt from the original string.
-  // A generation counter discards the result of a stale rebuild if the slider fired another
-  // request (or the selection changed) before this one's createTextMesh() finished.
+  // Discards the result of a stale rebuild if the slider fired another request, the selection
+  // changed, or oldGroup was deleted, before this one's createTextMesh() finished -- otherwise a
+  // late resolve would splice a "ghost" group back into placedTexts under the wrong (or a
+  // removed) index, permanently invisible to the rod-contact check from then on.
   let letterSpacingGeneration = 0
   const setSelectedLetterSpacing = async (letterSpacing) => {
     if (!selectedGroup || !liveScene) {
@@ -233,7 +235,7 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
     const {position, quaternion, scale} = oldGroup
 
     const newGroup = await createTextMesh(oldGroup.userData.text, {letterSpacing})
-    if (generation !== letterSpacingGeneration || !liveScene) {
+    if (generation !== letterSpacingGeneration || !liveScene || selectedGroup !== oldGroup) {
       return // superseded by a newer request, or the scene/selection has moved on
     }
 
@@ -280,7 +282,10 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
   }
 
   const isRodTouchingAnyText = () =>
-    placedTexts.some((group) => isSegmentTouchingBox(rodNear, rodFar, textBoxes.get(group)))
+    placedTexts.some((group) => {
+      const box = textBoxes.get(group)
+      return box && isSegmentTouchingBox(rodNear, rodFar, box)
+    })
 
   const initXrScene = ({scene, camera, renderer}) => {
     renderer.shadowMap.enabled = true
