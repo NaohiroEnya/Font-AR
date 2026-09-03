@@ -377,15 +377,22 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
     }
   }
 
-  // The game-over overlay darkens the whole screen (camera feed still faintly visible through
-  // it) and blocks taps on the placement/selection panels underneath until dismissed. Continuing
-  // just returns runState to 'idle' -- it doesn't touch the placed text objects or the text
+  // Both overlays darken the whole screen (camera feed still faintly visible through them) and
+  // block taps on the placement/selection panels underneath until dismissed. Dismissing either
+  // just returns runState to 'idle' -- neither touches the placed text objects or the text
   // input's value, so the course stays put and whatever was typed is still there to reuse.
   const gameoverOverlayEl = document.getElementById('gameover-overlay')
   const gameoverTimeEl = document.getElementById('gameover-time')
   document.getElementById('gameover-continue').addEventListener('click', () => {
     runState = 'idle'
     gameoverOverlayEl.hidden = true
+  })
+
+  const clearOverlayEl = document.getElementById('clear-overlay')
+  const clearTimeEl = document.getElementById('clear-time')
+  document.getElementById('clear-retry').addEventListener('click', () => {
+    runState = 'idle'
+    clearOverlayEl.hidden = true
   })
 
   const updateRunState = (safe, touchingStart, touchingGoal) => {
@@ -395,6 +402,8 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
     } else if (touchingGoal && runState === 'running') {
       runState = 'cleared'
       finalElapsedMs = performance.now() - runStartedAt
+      clearTimeEl.textContent = formatSeconds(finalElapsedMs)
+      clearOverlayEl.hidden = false
     } else if (runState === 'running' && !safe) {
       runState = 'gameover'
       finalElapsedMs = performance.now() - runStartedAt

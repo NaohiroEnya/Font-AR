@@ -44,10 +44,16 @@
       </div>
     </div>
 
-    <div id="gameover-overlay" hidden>
-      <div id="gameover-message">GAME OVER</div>
-      <div id="gameover-time"></div>
-      <button id="gameover-continue" type="button">CONTINUE</button>
+    <div id="gameover-overlay" class="run-overlay" hidden>
+      <div id="gameover-message" class="run-overlay-message gameover">GAME OVER</div>
+      <div id="gameover-time" class="run-overlay-time"></div>
+      <button id="gameover-continue" class="run-overlay-button" type="button">CONTINUE</button>
+    </div>
+
+    <div id="clear-overlay" class="run-overlay" hidden>
+      <div id="clear-message" class="run-overlay-message cleared">CLEAR</div>
+      <div id="clear-time" class="run-overlay-time"></div>
+      <button id="clear-retry" class="run-overlay-button" type="button">RETRY</button>
     </div>
 
     <script type="module" src="src/app.js"></script>

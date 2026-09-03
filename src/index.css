@@ -129,7 +129,7 @@ body {
   color: #fff;
 }
 
-#gameover-overlay {
+.run-overlay {
   position: fixed;
   inset: 0;
   z-index: 20;
@@ -143,24 +143,31 @@ body {
   pointer-events: auto;
 }
 
-#gameover-overlay[hidden] {
+.run-overlay[hidden] {
   display: none;
 }
 
-#gameover-message {
+.run-overlay-message {
   font-size: 34px;
   font-weight: bold;
   letter-spacing: 0.08em;
-  color: #ff5a5a;
   text-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
 }
 
-#gameover-time {
+.run-overlay-message.gameover {
+  color: #ff5a5a;
+}
+
+.run-overlay-message.cleared {
+  color: #ad50ff;
+}
+
+.run-overlay-time {
   font-size: 16px;
   opacity: 0.85;
 }
 
-#gameover-continue {
+.run-overlay-button {
   margin-top: 10px;
   padding: 12px 48px;
   border: none;
