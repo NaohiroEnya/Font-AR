@@ -60,25 +60,43 @@ const isPointInsideMesh = (point, mesh) => {
   return pointRaycaster.intersectObject(mesh, false).length % 2 === 1
 }
 
-const MARKER_RADIUS = 0.12
+const MARKER_RADIUS = 0.16
 const MARKER_TOUCH_DISTANCE = MARKER_RADIUS + PROBE_RADIUS
+const CHECKPOINT_COLOR = 0xf5c400
+
+// depthTest: false (plus a high renderOrder) makes the marker always draw on top of whatever
+// else is there, including the text mesh itself -- markers sit embedded just inside the text's
+// edge for gameplay reasons, and without this they read as half-buried in (or fully hidden by)
+// the glyph they're next to, rather than as a clearly visible landmark.
 const createMarker = (color) => {
   const mesh = new THREE.Mesh(
     new THREE.SphereGeometry(MARKER_RADIUS, 16, 16),
-    new THREE.MeshStandardMaterial({color, emissive: color, emissiveIntensity: 0.4})
+    new THREE.MeshStandardMaterial({color, emissive: color, emissiveIntensity: 0.8, depthTest: false})
   )
   mesh.castShadow = true
+  mesh.renderOrder = 2
   return mesh
 }
 
-// Adds start (green) / goal (red) markers as children of `group`, at the local points
-// text-plane.js already worked out (just beyond the text's left/right edge). As children they
+const LABEL_WORLD_HEIGHT = 0.5 // meters -- a small caption, not competing with the main text
+const LABEL_GAP = 0.15 // meters between the top of the main text and the bottom of its label
+
+// A small "START"/"GOAL" caption, built with the same glyph-extrusion pipeline as the main
+// placed text, positioned just above it and horizontally centered over the given marker.
+const createLabel = async (text, color, x, topY) => {
+  const label = await createTextMesh(text, {worldHeight: LABEL_WORLD_HEIGHT, color})
+  label.position.set(x, topY + LABEL_GAP, 0)
+  return label
+}
+
+// Adds start (green) / checkpoint (yellow) / goal (red) markers, plus "START"/"GOAL" labels, as
+// children of `group`, at the local points text-plane.js already worked out. As children they
 // automatically follow the group's placement, facing, and scale -- no extra transform math
 // needed here, and they're removed along with the text for free when the group is deleted.
 // References are kept on userData so the run-timer logic can find them later without
 // re-traversing children.
-const addStartGoalMarkers = (group) => {
-  const {startLocal, goalLocal} = group.userData
+const addCourseMarkers = async (group) => {
+  const {startLocal, goalLocal, checkpointLocal} = group.userData
   if (!startLocal || !goalLocal) {
     return // e.g. blank input, which produced an empty group
   }
@@ -87,10 +105,23 @@ const addStartGoalMarkers = (group) => {
   group.add(start)
   group.userData.startMarker = start
 
+  const checkpoint = createMarker(CHECKPOINT_COLOR)
+  checkpoint.position.copy(checkpointLocal)
+  group.add(checkpoint)
+  group.userData.checkpointMarker = checkpoint
+
   const goal = createMarker(0xe0663d)
   goal.position.copy(goalLocal)
   group.add(goal)
   group.userData.goalMarker = goal
+
+  const topY = group.children[0].geometry.boundingBox.max.y
+  const [startLabel, goalLabel] = await Promise.all([
+    createLabel('START', 0x2fa36b, startLocal.x, topY),
+    createLabel('GOAL', 0xe0663d, goalLocal.x, topY),
+  ])
+  group.add(startLabel)
+  group.add(goalLabel)
 }
 
 // True if the rod's current segment [near, far] passes within touching distance of `marker`.
@@ -192,7 +223,7 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
     const group = await createTextMesh(getInputText())
     group.position.copy(point)
     group.quaternion.copy(camera.quaternion) // face the viewer at the moment it's placed
-    addStartGoalMarkers(group)
+    await addCourseMarkers(group)
     scene.add(group)
     placedTexts.push(group)
     refreshBox(group)
@@ -351,15 +382,18 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
     statusEl.classList.toggle('out', !safe)
   }
 
-  // Run state: touching any start marker (re)starts the clock; touching any goal marker while
-  // running stops it and freezes the elapsed time as a clear. Losing safe contact while running
-  // ends the run as a game over instead. Goal touches are ignored before a run has started, and
-  // from 'cleared'/'gameover' only touching start again begins a fresh run. With multiple texts
-  // placed at once, any start/goal/text works interchangeably for now -- there's no per-text
-  // course tracking yet.
+  // Run state: touching any start marker (re)starts the clock and resets the checkpoint; touching
+  // the checkpoint while running just remembers that this run has passed it; touching any goal
+  // marker while running only clears (and stops the clock) if the checkpoint has been passed this
+  // run -- reaching goal without it is a no-op, the run just keeps going. Losing safe contact
+  // while running ends the run as a game over instead. Goal/checkpoint touches are ignored before
+  // a run has started, and from 'cleared'/'gameover' only touching start again begins a fresh run.
+  // With multiple texts placed at once, any start/checkpoint/goal/text works interchangeably for
+  // now -- there's no per-text course tracking yet.
   let runState = 'idle' // 'idle' | 'running' | 'cleared' | 'gameover'
   let runStartedAt = 0
   let finalElapsedMs = 0
+  let checkpointPassed = false
   const timerEl = document.getElementById('timer-status')
 
   const formatSeconds = (ms) => (ms / 1000).toFixed(1) + 's'
@@ -395,11 +429,14 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
     clearOverlayEl.hidden = true
   })
 
-  const updateRunState = (safe, touchingStart, touchingGoal) => {
+  const updateRunState = (safe, touchingStart, touchingCheckpoint, touchingGoal) => {
     if (touchingStart) {
       runState = 'running'
       runStartedAt = performance.now()
-    } else if (touchingGoal && runState === 'running') {
+      checkpointPassed = false
+    } else if (touchingCheckpoint && runState === 'running') {
+      checkpointPassed = true
+    } else if (touchingGoal && runState === 'running' && checkpointPassed) {
       runState = 'cleared'
       finalElapsedMs = performance.now() - runStartedAt
       clearTimeEl.textContent = formatSeconds(finalElapsedMs)
@@ -456,7 +493,13 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
         // places a new text using whatever's currently in the text input.
         const [textHit] = raycaster.intersectObjects(placedTexts, true)
         if (textHit) {
-          const hitGroup = textHit.object.parent
+          // Walk up from whatever was actually hit to the top-level placedTexts entry it belongs
+          // to -- most hits are one level down (the main mesh, a marker), but the START/GOAL
+          // labels are a text-mesh group of their own nested inside this one, two levels down.
+          let hitGroup = textHit.object
+          while (hitGroup && !placedTexts.includes(hitGroup)) {
+            hitGroup = hitGroup.parent
+          }
           if (hitGroup === selectedGroup) {
             dragTouchId = touch.identifier
           } else {
@@ -515,12 +558,13 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
       updateRodSegment(liveCamera)
 
       const touchingStart = placedTexts.some((group) => isRodTouchingMarker(rodLine, group.userData.startMarker, group.scale.x))
+      const touchingCheckpoint = placedTexts.some((group) => isRodTouchingMarker(rodLine, group.userData.checkpointMarker, group.scale.x))
       const touchingGoal = placedTexts.some((group) => isRodTouchingMarker(rodLine, group.userData.goalMarker, group.scale.x))
       // Short-circuits before the more expensive sampled text check when a marker is already touched.
-      const safe = touchingStart || touchingGoal || isRodTouchingAnyText()
+      const safe = touchingStart || touchingCheckpoint || touchingGoal || isRodTouchingAnyText()
 
       updateContactStatus(safe)
-      updateRunState(safe, touchingStart, touchingGoal)
+      updateRunState(safe, touchingStart, touchingCheckpoint, touchingGoal)
     },
   }
 
