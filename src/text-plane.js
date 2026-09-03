@@ -92,13 +92,17 @@ const pathToShapes = (otPath) => {
 
 // Builds a group showing `text` as a solid, shadow-casting 3D object sized so its world-space
 // height is `worldHeight` meters. The group is centered on X/Z with its bottom at local y=0, so
-// placing it at a ground hit point sits it directly on the ground.
-export const createTextMesh = async (text, {worldHeight = TEXT_WORLD_HEIGHT, color = '#ff3b30'} = {}) => {
+// placing it at a ground hit point sits it directly on the ground. `letterSpacing` is opentype.js's
+// own option: extra advance after each glyph, as a fraction of the font size -- since we call
+// getPath with fontSize=1, a value of e.g. 0.1 adds 0.1 em of gap between characters.
+export const createTextMesh = async (text, {worldHeight = TEXT_WORLD_HEIGHT, color = '#ff3b30', letterSpacing = 0} = {}) => {
   const font = await loadFont()
-  const otPath = font.getPath(text, 0, 0, 1) // fontSize=1 -> coordinates are fractions of an em
+  const otPath = font.getPath(text, 0, 0, 1, {letterSpacing}) // fontSize=1 -> coordinates are fractions of an em
   const shapes = pathToShapes(otPath)
 
   const group = new THREE.Group()
+  group.userData.text = text // kept so a placed text's letter-spacing can be changed later by
+                              // rebuilding its geometry from scratch with the same string
   if (shapes.length === 0) {
     return group // e.g. blank input, or a glyph outside the bundled font's coverage
   }

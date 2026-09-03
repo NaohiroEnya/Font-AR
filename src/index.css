@@ -97,7 +97,8 @@ body {
   pointer-events: auto;
 }
 
-#selection-size-row {
+#selection-size-row,
+#selection-spacing-row {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -105,7 +106,8 @@ body {
   font-size: 14px;
 }
 
-#selection-size {
+#selection-size,
+#selection-spacing {
   flex: 1;
 }
 

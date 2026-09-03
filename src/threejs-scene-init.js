@@ -219,6 +219,44 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
     refreshBox(selectedGroup) // the cached box is in world space, so a scale change invalidates it
   }
 
+  // Unlike scale, letter-spacing changes the glyph layout itself, so it can't be applied as a
+  // transform on the existing mesh -- the whole group has to be rebuilt from the original string.
+  // A generation counter discards the result of a stale rebuild if the slider fired another
+  // request (or the selection changed) before this one's createTextMesh() finished.
+  let letterSpacingGeneration = 0
+  const setSelectedLetterSpacing = async (letterSpacing) => {
+    if (!selectedGroup || !liveScene) {
+      return
+    }
+    const generation = ++letterSpacingGeneration
+    const oldGroup = selectedGroup
+    const {position, quaternion, scale} = oldGroup
+
+    const newGroup = await createTextMesh(oldGroup.userData.text, {letterSpacing})
+    if (generation !== letterSpacingGeneration || !liveScene) {
+      return // superseded by a newer request, or the scene/selection has moved on
+    }
+
+    newGroup.position.copy(position)
+    newGroup.quaternion.copy(quaternion)
+    newGroup.scale.copy(scale)
+    addStartGoalMarkers(newGroup)
+    const ring = createSelectionRing(newGroup)
+    if (ring) {
+      newGroup.add(ring)
+      newGroup.userData.selectionRing = ring
+    }
+
+    liveScene.remove(oldGroup)
+    liveScene.add(newGroup)
+    placedTexts[placedTexts.indexOf(oldGroup)] = newGroup
+    textBoxes.delete(oldGroup)
+    refreshBox(newGroup)
+    selectedGroup = newGroup
+    // Not calling onSelectionChange here: from the UI's point of view the selection itself
+    // hasn't changed, only the 3D object backing it was swapped out.
+  }
+
   const deleteSelected = () => {
     if (!selectedGroup || !liveScene) {
       return
@@ -447,5 +485,5 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
     },
   }
 
-  return {pipelineModule, setSelectedScale, deleteSelected, deselect}
+  return {pipelineModule, setSelectedScale, setSelectedLetterSpacing, deleteSelected, deselect}
 }
