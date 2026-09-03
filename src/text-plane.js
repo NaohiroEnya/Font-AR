@@ -13,6 +13,13 @@ import fontUrl from './assets/NotoSansJP-subset.otf?url'
 export const TEXT_WORLD_HEIGHT = 2.5 // meters
 const TEXT_THICKNESS_RATIO = 0.12 // extrusion depth, as a fraction of worldHeight
 const TEXT_OVERALL_OPACITY = 0.8
+// Multi-character text packs its glyphs as tight as opentype.js's own letter-spacing option
+// allows (a negative value pulls characters closer together), rather than leaving the font's
+// default advance width -- this was previously a runtime slider the player could adjust, but
+// swapping a placed text's geometry live mid-game made the rod-contact bookkeeping (which
+// group is at which array index, which box belongs to it) fragile, so it's now fixed at
+// creation time instead, same as everything else about a placed text's shape.
+const MAX_TIGHT_LETTER_SPACING = -0.1
 const MARKER_EMBED = 0.08 // meters the start/goal markers sit inside the text's left/right edge,
                           // so they're adjacent to (overlapping) the text rather than floating
                           // just outside it
@@ -92,17 +99,14 @@ const pathToShapes = (otPath) => {
 
 // Builds a group showing `text` as a solid, shadow-casting 3D object sized so its world-space
 // height is `worldHeight` meters. The group is centered on X/Z with its bottom at local y=0, so
-// placing it at a ground hit point sits it directly on the ground. `letterSpacing` is opentype.js's
-// own option: extra advance after each glyph, as a fraction of the font size -- since we call
-// getPath with fontSize=1, a value of e.g. 0.1 adds 0.1 em of gap between characters.
-export const createTextMesh = async (text, {worldHeight = TEXT_WORLD_HEIGHT, color = '#ff3b30', letterSpacing = 0} = {}) => {
+// placing it at a ground hit point sits it directly on the ground.
+export const createTextMesh = async (text, {worldHeight = TEXT_WORLD_HEIGHT, color = '#ff3b30'} = {}) => {
   const font = await loadFont()
+  const letterSpacing = text.length > 1 ? MAX_TIGHT_LETTER_SPACING : 0
   const otPath = font.getPath(text, 0, 0, 1, {letterSpacing}) // fontSize=1 -> coordinates are fractions of an em
   const shapes = pathToShapes(otPath)
 
   const group = new THREE.Group()
-  group.userData.text = text // kept so a placed text's letter-spacing can be changed later by
-                              // rebuilding its geometry from scratch with the same string
   if (shapes.length === 0) {
     return group // e.g. blank input, or a glyph outside the bundled font's coverage
   }
