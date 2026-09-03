@@ -1,6 +1,6 @@
 // 8th Wall XR Camera Pipeline Module: lets the user tap the ground to fix text in real space,
-// select a placed text to drag-reposition or resize it, and play an "operation game" pass at it
-// with a probe rod fixed to the device.
+// select a placed text to delete it, and play an "operation game" pass at it with a probe rod
+// fixed to the device.
 // XR8.XrController provides real 6DoF SLAM tracking, so text placed here stays anchored to the
 // physical location it was tapped on, including depth (distance from the camera) — unlike a
 // DeviceOrientation-only approach, which can only react to tilt, not real-world position.
@@ -110,8 +110,7 @@ const isRodTouchingMarker = (rodLine, marker) => {
 const SELECTION_RING_COLOR = 0x2979ff
 
 // A thin flat ring, sized to the selected text's footprint, added as a child of its group so it
-// automatically follows that group's position, rotation, and (importantly, for the resize
-// slider) scale without any extra transform math.
+// automatically follows that group's position and rotation without any extra transform math.
 const createSelectionRing = (group) => {
   const mesh = group.children[0]
   if (!mesh) {
@@ -135,9 +134,9 @@ const createSelectionRing = (group) => {
 }
 
 export const initScenePipelineModule = ({onSelectionChange} = {}) => {
-  // Plane used both as the raycast target for tap placement/dragging and as a shadow-catcher:
-  // it's invisible except where a placed text object blocks the light, so text reads as sitting
-  // on the ground rather than floating.
+  // Plane used both as the raycast target for tap placement and as a shadow-catcher: it's
+  // invisible except where a placed text object blocks the light, so text reads as sitting on
+  // the ground rather than floating.
   const groundGeometry = new THREE.PlaneGeometry(2000, 2000)
   groundGeometry.rotateX(-Math.PI / 2)
   const groundMaterial = new THREE.ShadowMaterial()
@@ -148,11 +147,10 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
   const raycaster = new THREE.Raycaster()
   const pointer = new THREE.Vector2()
   const placedTexts = [] // groups currently placed in the scene, for tap-to-select
-  const textBoxes = new Map() // group -> world-space Box3, refreshed whenever a group moves/resizes
+  const textBoxes = new Map() // group -> world-space Box3, set once when placed
   const probeRod = createProbeRod()
 
   let selectedGroup = null
-  let dragTouchId = null // touch identifier currently dragging selectedGroup, or null
   let liveScene = null
 
   const getInputText = () => document.getElementById('text-input').value.trim() || 'AR'
@@ -167,10 +165,10 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
   //
   // Box3.setFromObject(mesh) internally does mesh.updateWorldMatrix(false, false) -- it refreshes
   // the mesh's own matrix but, unlike calling it on the group directly, does NOT walk up to
-  // refresh the group's matrixWorld first. Right after changing group.position (here, or via a
-  // touchmove drag) nothing else has necessarily re-run a scene-wide matrix update yet, so that
-  // read the group's matrixWorld from before the change -- explicitly forcing the parent chain
-  // here first keeps this correct regardless of timing.
+  // refresh the group's matrixWorld first. Right after setting group.position here, nothing else
+  // has necessarily re-run a scene-wide matrix update yet, so that would read the group's
+  // matrixWorld from before the change -- explicitly forcing the parent chain here first keeps
+  // this correct regardless of timing.
   const refreshBox = (group) => {
     const mesh = group.children[0]
     if (mesh) {
@@ -207,7 +205,6 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
       delete selectedGroup.userData.selectionRing
     }
     selectedGroup = null
-    dragTouchId = null
     if (onSelectionChange) {
       onSelectionChange(null)
     }
@@ -387,17 +384,11 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
         setPointerFromTouch(touch)
         raycaster.setFromCamera(pointer, camera)
 
-        // Tapping an already-placed text selects it (or, if it's already selected, starts
-        // dragging it); tapping empty ground either deselects, or -- if nothing is selected --
-        // places a new text using whatever's currently in the text input.
+        // Tapping an already-placed text selects it; tapping empty ground either deselects, or --
+        // if nothing is selected -- places a new text using whatever's currently in the text input.
         const [textHit] = raycaster.intersectObjects(placedTexts, true)
         if (textHit) {
-          const hitGroup = textHit.object.parent
-          if (hitGroup === selectedGroup) {
-            dragTouchId = touch.identifier
-          } else {
-            select(hitGroup)
-          }
+          select(textHit.object.parent)
           return
         }
 
@@ -411,31 +402,6 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
           await placeTextAt({scene, camera}, groundHit.point)
         }
       }, true)
-
-      canvas.addEventListener('touchmove', (event) => {
-        event.preventDefault()
-
-        if (dragTouchId === null) {
-          return
-        }
-        const touch = Array.from(event.touches).find((t) => t.identifier === dragTouchId)
-        if (!touch) {
-          return
-        }
-        setPointerFromTouch(touch)
-        raycaster.setFromCamera(pointer, camera)
-        const [groundHit] = raycaster.intersectObject(ground)
-        if (groundHit) {
-          selectedGroup.position.copy(groundHit.point)
-          refreshBox(selectedGroup) // the cached box is in world space, so moving invalidates it
-        }
-      }, true)
-
-      const endDrag = () => {
-        dragTouchId = null
-      }
-      canvas.addEventListener('touchend', endDrag, true)
-      canvas.addEventListener('touchcancel', endDrag, true)
     },
 
     // Runs every processed camera frame. Explicitly re-copying the live camera's transform here

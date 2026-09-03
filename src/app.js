@@ -6,7 +6,7 @@ import * as THREE from 'three'
 window.THREE = THREE
 
 const PLACEMENT_INSTRUCTIONS = '文字を入力して地面をタップすると設置、設置済みの文字をタップすると選択されます'
-const SELECTION_INSTRUCTIONS = '選択中の文字をドラッグすると位置を移動できます'
+const SELECTION_INSTRUCTIONS = '削除するか、完了をタップしてください'
 
 const instructionsEl = document.getElementById('instructions')
 const placementPanel = document.getElementById('placement-panel')
