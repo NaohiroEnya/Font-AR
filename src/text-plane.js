@@ -173,9 +173,6 @@ export const createTextMesh = async (text, {worldHeight = TEXT_WORLD_HEIGHT, col
 
   group.userData.startLocal = new THREE.Vector3(leftEdgeX + embed, centerY, 0)
   group.userData.goalLocal = new THREE.Vector3(rightEdgeX - embed, centerY, 0)
-  // The text is already centered on local X=0, so that's the natural midpoint between start and
-  // goal for a checkpoint -- no edge-finding needed here, unlike start/goal above.
-  group.userData.checkpointLocal = new THREE.Vector3(0, centerY, 0)
 
   return group
 }
