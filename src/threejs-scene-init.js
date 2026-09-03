@@ -96,15 +96,22 @@ const addStartGoalMarkers = (group) => {
 // Uses the exact closest point on the segment rather than discrete sampling (unlike the text
 // contact check) since a sphere-vs-segment distance has a simple closed form -- no need to
 // approximate a solid volume here.
+//
+// `scale` is the marker's owning group's current scale (from the resize slider): the marker mesh
+// itself shrinks/grows correctly as a scaled child, but MARKER_TOUCH_DISTANCE is a plain world-
+// space constant, so without this it stayed fixed at ~19cm regardless of how small the text (and
+// its marker) had been resized -- on a text shrunk to e.g. 0.3x, that left a "safe" halo several
+// times wider than the marker was actually drawn, matching contact only near the marker's default
+// size rather than however big it currently, visibly is.
 const markerWorldPos = new THREE.Vector3()
 const closestOnRod = new THREE.Vector3()
-const isRodTouchingMarker = (rodLine, marker) => {
+const isRodTouchingMarker = (rodLine, marker, scale) => {
   if (!marker) {
     return false
   }
   marker.getWorldPosition(markerWorldPos)
   rodLine.closestPointToPoint(markerWorldPos, true, closestOnRod)
-  return closestOnRod.distanceTo(markerWorldPos) <= MARKER_TOUCH_DISTANCE
+  return closestOnRod.distanceTo(markerWorldPos) <= MARKER_TOUCH_DISTANCE * scale
 }
 
 const SELECTION_RING_COLOR = 0x2979ff
@@ -157,8 +164,26 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
 
   const getInputText = () => document.getElementById('text-input').value.trim() || 'AR'
 
+  // Computed from the text mesh alone (group.children[0]), not the whole group: the group can
+  // also carry UI-only children -- the selection ring, while a text is selected -- and including
+  // those inflated this box hugely (a wide/flat ring's own bounding box extends far past the
+  // actual glyph's shallow extruded depth), leaving a giant stale "safe" zone around any text that
+  // had ever been selected, even long after deselecting it. Markers are left out too: they sit
+  // embedded just inside the mesh's own edge by construction, so this box already covers them,
+  // and their own contact is checked separately (isRodTouchingMarker) regardless.
+  //
+  // Box3.setFromObject(mesh) internally does mesh.updateWorldMatrix(false, false) -- it refreshes
+  // the mesh's own matrix but, unlike calling it on the group directly, does NOT walk up to
+  // refresh the group's matrixWorld first. Right after changing group.position/quaternion/scale
+  // (here, or in setSelectedScale/touchmove) nothing else has necessarily re-run a scene-wide
+  // matrix update yet, so that read the group's matrixWorld from before the change -- explicitly
+  // forcing the parent chain here first keeps this correct regardless of timing.
   const refreshBox = (group) => {
-    textBoxes.set(group, new THREE.Box3().setFromObject(group))
+    const mesh = group.children[0]
+    if (mesh) {
+      mesh.updateWorldMatrix(true, false)
+    }
+    textBoxes.set(group, new THREE.Box3().setFromObject(mesh || group))
   }
 
   const placeTextAt = async ({scene, camera}, point) => {
@@ -440,8 +465,8 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
       probeRod.quaternion.copy(liveCamera.quaternion)
       updateRodSegment(liveCamera)
 
-      const touchingStart = placedTexts.some((group) => isRodTouchingMarker(rodLine, group.userData.startMarker))
-      const touchingGoal = placedTexts.some((group) => isRodTouchingMarker(rodLine, group.userData.goalMarker))
+      const touchingStart = placedTexts.some((group) => isRodTouchingMarker(rodLine, group.userData.startMarker, group.scale.x))
+      const touchingGoal = placedTexts.some((group) => isRodTouchingMarker(rodLine, group.userData.goalMarker, group.scale.x))
       // Short-circuits before the more expensive sampled text check when a marker is already touched.
       const safe = touchingStart || touchingGoal || isRodTouchingAnyText()
 
