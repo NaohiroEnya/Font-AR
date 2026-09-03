@@ -24,9 +24,23 @@
     <div id="timer-status">スタートに触れて計測開始</div>
 
     <div id="ui">
-      <p id="instructions">文字を入力して地面をタップすると設置、設置済みの文字をタップすると削除されます</p>
-      <div id="controls">
-        <input id="text-input" type="text" maxlength="10" value="AR" placeholder="表示する文字">
+      <p id="instructions">文字を入力して地面をタップすると設置、設置済みの文字をタップすると選択されます</p>
+
+      <div id="placement-panel">
+        <div id="controls">
+          <input id="text-input" type="text" maxlength="10" value="AR" placeholder="表示する文字">
+        </div>
+      </div>
+
+      <div id="selection-panel" hidden>
+        <div id="selection-size-row">
+          <span>サイズ</span>
+          <input id="selection-size" type="range" min="0.5" max="2.5" step="0.05" value="1" aria-label="選択中の文字のサイズ">
+        </div>
+        <div id="selection-actions">
+          <button id="selection-delete" type="button" class="panel-button panel-button-danger">この文字を削除</button>
+          <button id="selection-done" type="button" class="panel-button">完了</button>
+        </div>
       </div>
     </div>
 

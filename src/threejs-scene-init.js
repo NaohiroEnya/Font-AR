@@ -1,4 +1,6 @@
-// 8th Wall XR Camera Pipeline Module: lets the user tap the ground to fix text in real space.
+// 8th Wall XR Camera Pipeline Module: lets the user tap the ground to fix text in real space,
+// select a placed text to drag-reposition or resize it, and play an "operation game" pass at it
+// with a probe rod fixed to the device.
 // XR8.XrController provides real 6DoF SLAM tracking, so text placed here stays anchored to the
 // physical location it was tapped on, including depth (distance from the camera) — unlike a
 // DeviceOrientation-only approach, which can only react to tilt, not real-world position.
@@ -64,9 +66,10 @@ const createMarker = (color) => {
 
 // Adds start (green) / goal (red) markers as children of `group`, at the local points
 // text-plane.js already worked out (just beyond the text's left/right edge). As children they
-// automatically follow the group's placement and facing -- no extra transform math needed here,
-// and they're removed along with the text for free when the group is deleted. References are
-// kept on userData so the run-timer logic can find them later without re-traversing children.
+// automatically follow the group's placement, facing, and scale -- no extra transform math
+// needed here, and they're removed along with the text for free when the group is deleted.
+// References are kept on userData so the run-timer logic can find them later without
+// re-traversing children.
 const addStartGoalMarkers = (group) => {
   const {startLocal, goalLocal} = group.userData
   if (!startLocal || !goalLocal) {
@@ -98,10 +101,37 @@ const isRodTouchingMarker = (rodLine, marker) => {
   return closestOnRod.distanceTo(markerWorldPos) <= MARKER_TOUCH_DISTANCE
 }
 
-export const initScenePipelineModule = () => {
-  // Plane used both as the raycast target for tap placement and as a shadow-catcher: it's
-  // invisible except where a placed text object blocks the light, so text reads as sitting on
-  // the ground rather than floating.
+const SELECTION_RING_COLOR = 0x2979ff
+
+// A thin flat ring, sized to the selected text's footprint, added as a child of its group so it
+// automatically follows that group's position, rotation, and (importantly, for the resize
+// slider) scale without any extra transform math.
+const createSelectionRing = (group) => {
+  const mesh = group.children[0]
+  if (!mesh) {
+    return null // e.g. blank input, which produced an empty group
+  }
+  const bounds = mesh.geometry.boundingBox
+  const outerRadius = Math.max(bounds.max.x - bounds.min.x, bounds.max.z - bounds.min.z) * 0.65 + 0.04
+  const geometry = new THREE.RingGeometry(outerRadius * 0.85, outerRadius, 40)
+  geometry.rotateX(-Math.PI / 2)
+  const material = new THREE.MeshBasicMaterial({
+    color: SELECTION_RING_COLOR,
+    transparent: true,
+    opacity: 0.9,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  })
+  const ring = new THREE.Mesh(geometry, material)
+  ring.position.y = 0.003 // just above the ground text sits on, to avoid z-fighting
+  ring.renderOrder = 1
+  return ring
+}
+
+export const initScenePipelineModule = ({onSelectionChange} = {}) => {
+  // Plane used both as the raycast target for tap placement/dragging and as a shadow-catcher:
+  // it's invisible except where a placed text object blocks the light, so text reads as sitting
+  // on the ground rather than floating.
   const groundGeometry = new THREE.PlaneGeometry(2000, 2000)
   groundGeometry.rotateX(-Math.PI / 2)
   const groundMaterial = new THREE.ShadowMaterial()
@@ -111,11 +141,19 @@ export const initScenePipelineModule = () => {
 
   const raycaster = new THREE.Raycaster()
   const pointer = new THREE.Vector2()
-  const placedTexts = [] // groups currently placed in the scene, for tap-to-delete
-  const textBoxes = new Map() // group -> world-space Box3, cached once since placed text doesn't move
+  const placedTexts = [] // groups currently placed in the scene, for tap-to-select
+  const textBoxes = new Map() // group -> world-space Box3, refreshed whenever a group moves/resizes
   const probeRod = createProbeRod()
 
+  let selectedGroup = null
+  let dragTouchId = null // touch identifier currently dragging selectedGroup, or null
+  let liveScene = null
+
   const getInputText = () => document.getElementById('text-input').value.trim() || 'AR'
+
+  const refreshBox = (group) => {
+    textBoxes.set(group, new THREE.Box3().setFromObject(group))
+  }
 
   const placeTextAt = async ({scene, camera}, point) => {
     const group = await createTextMesh(getInputText())
@@ -124,13 +162,64 @@ export const initScenePipelineModule = () => {
     addStartGoalMarkers(group)
     scene.add(group)
     placedTexts.push(group)
-    textBoxes.set(group, new THREE.Box3().setFromObject(group))
+    refreshBox(group)
   }
 
   const removeText = (scene, group) => {
     scene.remove(group)
     placedTexts.splice(placedTexts.indexOf(group), 1)
     textBoxes.delete(group)
+  }
+
+  const deselect = () => {
+    if (!selectedGroup) {
+      return
+    }
+    const ring = selectedGroup.userData.selectionRing
+    if (ring) {
+      selectedGroup.remove(ring)
+      ring.geometry.dispose()
+      ring.material.dispose()
+      delete selectedGroup.userData.selectionRing
+    }
+    selectedGroup = null
+    dragTouchId = null
+    if (onSelectionChange) {
+      onSelectionChange(null)
+    }
+  }
+
+  const select = (group) => {
+    if (group === selectedGroup) {
+      return
+    }
+    deselect()
+    selectedGroup = group
+    const ring = createSelectionRing(group)
+    if (ring) {
+      group.add(ring)
+      group.userData.selectionRing = ring
+    }
+    if (onSelectionChange) {
+      onSelectionChange(group)
+    }
+  }
+
+  const setSelectedScale = (scale) => {
+    if (!selectedGroup) {
+      return
+    }
+    selectedGroup.scale.setScalar(scale)
+    refreshBox(selectedGroup) // the cached box is in world space, so a scale change invalidates it
+  }
+
+  const deleteSelected = () => {
+    if (!selectedGroup || !liveScene) {
+      return
+    }
+    const group = selectedGroup
+    deselect()
+    removeText(liveScene, group)
   }
 
   // Recomputes the rod's current world-space centerline from the live camera each frame. Shared
@@ -253,19 +342,21 @@ export const initScenePipelineModule = () => {
     }
   }
 
-  return {
+  const pipelineModule = {
     name: 'textplacement',
 
     onStart: ({canvas}) => {
       const {scene, camera, renderer} = XR8.Threejs.xrScene()
       liveCamera = camera
+      liveScene = scene
       loadFont() // kick off the font fetch/parse now, so it's likely ready by the first tap
 
       initXrScene({scene, camera, renderer})
 
-      canvas.addEventListener('touchmove', (event) => {
-        event.preventDefault()
-      })
+      const setPointerFromTouch = (touch) => {
+        pointer.x = (touch.clientX / window.innerWidth) * 2 - 1
+        pointer.y = -(touch.clientY / window.innerHeight) * 2 + 1
+      }
 
       XR8.XrController.updateCameraProjectionMatrix(
         {origin: camera.position, facing: camera.quaternion}
@@ -277,14 +368,25 @@ export const initScenePipelineModule = () => {
         }
 
         const touch = event.touches[0]
-        pointer.x = (touch.clientX / window.innerWidth) * 2 - 1
-        pointer.y = -(touch.clientY / window.innerHeight) * 2 + 1
+        setPointerFromTouch(touch)
         raycaster.setFromCamera(pointer, camera)
 
-        // Tapping an already-placed text deletes it; otherwise tapping the ground places a new one.
+        // Tapping an already-placed text selects it (or, if it's already selected, starts
+        // dragging it); tapping empty ground either deselects, or -- if nothing is selected --
+        // places a new text using whatever's currently in the text input.
         const [textHit] = raycaster.intersectObjects(placedTexts, true)
         if (textHit) {
-          removeText(scene, textHit.object.parent)
+          const hitGroup = textHit.object.parent
+          if (hitGroup === selectedGroup) {
+            dragTouchId = touch.identifier
+          } else {
+            select(hitGroup)
+          }
+          return
+        }
+
+        if (selectedGroup) {
+          deselect()
           return
         }
 
@@ -293,6 +395,31 @@ export const initScenePipelineModule = () => {
           await placeTextAt({scene, camera}, groundHit.point)
         }
       }, true)
+
+      canvas.addEventListener('touchmove', (event) => {
+        event.preventDefault()
+
+        if (dragTouchId === null) {
+          return
+        }
+        const touch = Array.from(event.touches).find((t) => t.identifier === dragTouchId)
+        if (!touch) {
+          return
+        }
+        setPointerFromTouch(touch)
+        raycaster.setFromCamera(pointer, camera)
+        const [groundHit] = raycaster.intersectObject(ground)
+        if (groundHit) {
+          selectedGroup.position.copy(groundHit.point)
+          refreshBox(selectedGroup) // the cached box is in world space, so moving invalidates it
+        }
+      }, true)
+
+      const endDrag = () => {
+        dragTouchId = null
+      }
+      canvas.addEventListener('touchend', endDrag, true)
+      canvas.addEventListener('touchcancel', endDrag, true)
     },
 
     // Runs every processed camera frame. Explicitly re-copying the live camera's transform here
@@ -316,4 +443,6 @@ export const initScenePipelineModule = () => {
       updateRunState(safe, touchingStart, touchingGoal)
     },
   }
+
+  return {pipelineModule, setSelectedScale, deleteSelected, deselect}
 }

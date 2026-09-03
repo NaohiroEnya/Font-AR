@@ -1,11 +1,42 @@
 // app.js is the main entry point for your three.js 8th Wall app.
 
 import {initScenePipelineModule} from './threejs-scene-init'
-import * as THREE from 'three';
+import * as THREE from 'three'
 
 window.THREE = THREE
 
-const onxrloaded = () => {  
+const PLACEMENT_INSTRUCTIONS = '文字を入力して地面をタップすると設置、設置済みの文字をタップすると選択されます'
+const SELECTION_INSTRUCTIONS = '選択中の文字をドラッグすると位置を移動できます。スライダーでサイズも調整できます'
+
+const instructionsEl = document.getElementById('instructions')
+const placementPanel = document.getElementById('placement-panel')
+const selectionPanel = document.getElementById('selection-panel')
+const selectionSizeInput = document.getElementById('selection-size')
+
+const handleSelectionChange = (group) => {
+  const selected = !!group
+  placementPanel.hidden = selected
+  selectionPanel.hidden = !selected
+  instructionsEl.textContent = selected ? SELECTION_INSTRUCTIONS : PLACEMENT_INSTRUCTIONS
+  if (selected) {
+    selectionSizeInput.value = '1'
+  }
+}
+
+const {pipelineModule, setSelectedScale, deleteSelected, deselect} =
+  initScenePipelineModule({onSelectionChange: handleSelectionChange})
+
+selectionSizeInput.addEventListener('input', (event) => {
+  setSelectedScale(Number(event.target.value))
+})
+document.getElementById('selection-delete').addEventListener('click', () => {
+  deleteSelected()
+})
+document.getElementById('selection-done').addEventListener('click', () => {
+  deselect()
+})
+
+const onxrloaded = () => {
   XR8.addCameraPipelineModules([  // Add camera pipeline modules.
     // Existing pipeline modules.
     XR8.GlTextureRenderer.pipelineModule(),      // Draws the camera feed.
@@ -16,7 +47,7 @@ const onxrloaded = () => {
     XRExtras.Loading.pipelineModule(),           // Manages the loading screen on startup.
     XRExtras.RuntimeError.pipelineModule(),      // Shows an error image on runtime error.
     // Custom pipeline modules.
-    initScenePipelineModule(),  // Sets up the threejs camera and scene content.
+    pipelineModule,  // Sets up the threejs camera and scene content.
   ])
 
   const canvas = document.getElementById('camerafeed')
