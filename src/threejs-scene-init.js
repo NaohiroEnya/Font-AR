@@ -16,9 +16,16 @@ const PROBE_NEAR = 0.2 // gap between the camera and the rod's near end, so smal
 const PROBE_Y_OFFSET = -0.45 // camera-local: shifts the whole rod down, so it reads as
                              // emerging from the bottom-center of the screen rather than
                              // dead-center, while staying perfectly parallel to the device
-const CONTACT_SAMPLE_STEP = 0.15 // meters between points sampled along the rod each frame when
-                                  // checking for contact -- roughly the rod's own diameter, so a
-                                  // touch shouldn't be able to slip between two sample points
+const CONTACT_SAMPLE_STEP = 0.04 // meters between points sampled along the rod's length each
+                                  // frame when checking for contact -- finer than the rod's own
+                                  // radius, so a thin or steeply-angled stroke can't slip between
+                                  // two consecutive length samples
+const CONTACT_RADIAL_SAMPLES = 8 // extra points checked around each length sample, at the rod's
+                                  // own radius, approximating its actual cylindrical volume --
+                                  // without these, only the centerline (an infinitely thin line)
+                                  // is tested, so the rod could be visibly half-overlapping a
+                                  // stroke along its edge while its exact centerline sits just
+                                  // past it, reading as a full miss
 
 // Builds the "operation game" probe: a thin rod that always reads as emerging from the
 // bottom-center of the screen and running straight ahead, parallel to the device. Its geometry
@@ -233,24 +240,37 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
 
   // Recomputes the rod's current world-space centerline from the live camera each frame. Shared
   // by both the text-contact check (sampled) and the marker-contact check (exact), so the
-  // camera's position/quaternion only need to be applied once per frame.
+  // camera's position/quaternion only need to be applied once per frame. Also tracks the rod's
+  // own local X/Y axes in world space, so isRodTouchingAnyText can offset sample points around
+  // the centerline to cover the rod's actual cross-section (see CONTACT_RADIAL_SAMPLES above).
   const rodNearLocal = new THREE.Vector3(0, PROBE_Y_OFFSET, -PROBE_NEAR)
   const rodFarLocal = new THREE.Vector3(0, PROBE_Y_OFFSET, -(PROBE_NEAR + PROBE_LENGTH))
   const rodNear = new THREE.Vector3()
   const rodFar = new THREE.Vector3()
   const rodLine = new THREE.Line3(rodNear, rodFar)
+  const rodAxisX = new THREE.Vector3()
+  const rodAxisY = new THREE.Vector3()
   const updateRodSegment = (camera) => {
     rodNear.copy(rodNearLocal).applyQuaternion(camera.quaternion).add(camera.position)
     rodFar.copy(rodFarLocal).applyQuaternion(camera.quaternion).add(camera.position)
+    rodAxisX.set(1, 0, 0).applyQuaternion(camera.quaternion)
+    rodAxisY.set(0, 1, 0).applyQuaternion(camera.quaternion)
   }
 
-  // Samples points along the rod segment and checks each one (cheaply, via its cached bounding
-  // box first) against every placed text's actual solid volume -- so leaving the actual glyph
-  // shape (a gap between two characters, or the hollow center of one like 回) reads as OUT, while
-  // any part of the rod still touching real stroke material anywhere along its length reads SAFE.
+  const radialAngles = Array.from(
+    {length: CONTACT_RADIAL_SAMPLES},
+    (_, i) => (i / CONTACT_RADIAL_SAMPLES) * Math.PI * 2
+  )
+
+  // Samples points along the rod's length and, at each one, also around its actual cross-section
+  // (not just the centerline), checking each against every placed text's actual solid volume --
+  // so leaving the actual glyph shape (a gap between two characters, or the hollow center of one
+  // like 回) reads as OUT, while any part of the rod's real volume still touching stroke material
+  // anywhere along its length reads SAFE, including a partial edge-on overlap.
   const sampleCount = Math.ceil(PROBE_LENGTH / CONTACT_SAMPLE_STEP)
   const isRodTouchingAnyText = () => {
     const point = new THREE.Vector3()
+    const testPoint = new THREE.Vector3()
 
     for (let i = 0; i <= sampleCount; i += 1) {
       point.lerpVectors(rodNear, rodFar, i / sampleCount)
@@ -258,8 +278,17 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
         const mesh = group.children[0]
         const box = textBoxes.get(group)
         if (!mesh || !box) continue // empty group (e.g. blank input), or not yet placed
+
         if (box.containsPoint(point) && isPointInsideMesh(point, mesh)) {
           return true
+        }
+        for (const angle of radialAngles) {
+          testPoint.copy(point)
+            .addScaledVector(rodAxisX, Math.cos(angle) * PROBE_RADIUS)
+            .addScaledVector(rodAxisY, Math.sin(angle) * PROBE_RADIUS)
+          if (box.containsPoint(testPoint) && isPointInsideMesh(testPoint, mesh)) {
+            return true
+          }
         }
       }
     }
