@@ -128,3 +128,45 @@ body {
   background: rgba(255, 59, 48, 0.9);
   color: #fff;
 }
+
+#gameover-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  pointer-events: auto;
+}
+
+#gameover-overlay[hidden] {
+  display: none;
+}
+
+#gameover-message {
+  font-size: 34px;
+  font-weight: bold;
+  letter-spacing: 0.08em;
+  color: #ff5a5a;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+}
+
+#gameover-time {
+  font-size: 16px;
+  opacity: 0.85;
+}
+
+#gameover-continue {
+  margin-top: 10px;
+  padding: 12px 48px;
+  border: none;
+  border-radius: 999px;
+  font-size: 16px;
+  font-weight: bold;
+  background: #2979ff;
+  color: #fff;
+}

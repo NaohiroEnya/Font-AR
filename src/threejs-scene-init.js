@@ -16,9 +16,6 @@ const PROBE_NEAR = 0.2 // gap between the camera and the rod's near end, so smal
 const PROBE_Y_OFFSET = -0.45 // camera-local: shifts the whole rod down, so it reads as
                              // emerging from the bottom-center of the screen rather than
                              // dead-center, while staying perfectly parallel to the device
-const CONTACT_SAMPLE_STEP = 0.15 // meters between points sampled along the rod each frame when
-                                  // checking for contact -- roughly the rod's own diameter, so a
-                                  // touch shouldn't be able to slip between two sample points
 
 // Builds the "operation game" probe: a thin rod that always reads as emerging from the
 // bottom-center of the screen and running straight ahead, parallel to the device. Its geometry
@@ -39,18 +36,27 @@ const createProbeRod = () => {
   return rod
 }
 
-// Casts a ray from `point` and counts how many times it crosses `mesh`. An odd count means the
-// point is inside the mesh's solid volume -- true for a ray in any fixed direction through a
-// closed (watertight) manifold, which is what THREE.ExtrudeGeometry produces, so this works
-// regardless of how the text has been rotated to face the camera. The direction is tilted
-// slightly off any axis (rather than a plain "straight up") so it doesn't graze exactly along a
-// triangle edge or through a shared vertex -- which, for symmetric glyphs like 回, a purely
-// vertical ray through the horizontal center reliably does, double-counting that crossing.
-const CAST_DIR = new THREE.Vector3(0.0173, 1, 0.0111).normalize()
-const pointRaycaster = new THREE.Raycaster()
-const isPointInsideMesh = (point, mesh) => {
-  pointRaycaster.set(point, CAST_DIR)
-  return pointRaycaster.intersectObject(mesh, false).length % 2 === 1
+// True if the segment [near, far] intersects `box` at all (either endpoint already inside, or
+// the segment passes through it). Used as the rod/text contact check: as long as any part of the
+// rod is still within a placed text's overall bounding box, it counts as touching -- not just
+// while it's against actual stroke material -- so passing through the gap between two characters,
+// or through a hole inside one (回's center, say), stays safe rather than reading as an instant
+// exit. Only crossing all the way out of the box counts as leaving that text.
+const segBoxDir = new THREE.Vector3()
+const segBoxRay = new THREE.Ray()
+const segBoxHit = new THREE.Vector3()
+const isSegmentTouchingBox = (near, far, box) => {
+  if (box.containsPoint(near) || box.containsPoint(far)) {
+    return true
+  }
+  segBoxDir.subVectors(far, near)
+  const length = segBoxDir.length()
+  segBoxDir.normalize()
+  segBoxRay.set(near, segBoxDir)
+  if (!segBoxRay.intersectBox(box, segBoxHit)) {
+    return false
+  }
+  return near.distanceTo(segBoxHit) <= length
 }
 
 const MARKER_RADIUS = 0.12
@@ -235,24 +241,8 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
     rodFar.copy(rodFarLocal).applyQuaternion(camera.quaternion).add(camera.position)
   }
 
-  // Samples points along the rod segment and checks each one (cheaply, via its cached bounding
-  // box first) against every placed text's actual solid volume.
-  const sampleCount = Math.ceil(PROBE_LENGTH / CONTACT_SAMPLE_STEP)
-  const isRodTouchingAnyText = () => {
-    const point = new THREE.Vector3()
-
-    for (let i = 0; i <= sampleCount; i += 1) {
-      point.lerpVectors(rodNear, rodFar, i / sampleCount)
-      for (const group of placedTexts) {
-        const mesh = group.children[0]
-        if (!mesh) continue // empty group, e.g. blank input
-        if (textBoxes.get(group).containsPoint(point) && isPointInsideMesh(point, mesh)) {
-          return true
-        }
-      }
-    }
-    return false
-  }
+  const isRodTouchingAnyText = () =>
+    placedTexts.some((group) => isSegmentTouchingBox(rodNear, rodFar, textBoxes.get(group)))
 
   const initXrScene = ({scene, camera, renderer}) => {
     renderer.shadowMap.enabled = true
@@ -319,6 +309,17 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
     }
   }
 
+  // The game-over overlay darkens the whole screen (camera feed still faintly visible through
+  // it) and blocks taps on the placement/selection panels underneath until dismissed. Continuing
+  // just returns runState to 'idle' -- it doesn't touch the placed text objects or the text
+  // input's value, so the course stays put and whatever was typed is still there to reuse.
+  const gameoverOverlayEl = document.getElementById('gameover-overlay')
+  const gameoverTimeEl = document.getElementById('gameover-time')
+  document.getElementById('gameover-continue').addEventListener('click', () => {
+    runState = 'idle'
+    gameoverOverlayEl.hidden = true
+  })
+
   const updateRunState = (safe, touchingStart, touchingGoal) => {
     if (touchingStart) {
       runState = 'running'
@@ -329,6 +330,8 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
     } else if (runState === 'running' && !safe) {
       runState = 'gameover'
       finalElapsedMs = performance.now() - runStartedAt
+      gameoverTimeEl.textContent = formatSeconds(finalElapsedMs)
+      gameoverOverlayEl.hidden = false
     }
 
     if (runState === 'idle') {
