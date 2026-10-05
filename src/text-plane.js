@@ -20,7 +20,7 @@ const TEXT_OVERALL_OPACITY = 0.8
 // group is at which array index, which box belongs to it) fragile, so it's now fixed at
 // creation time instead, same as everything else about a placed text's shape.
 const MAX_TIGHT_LETTER_SPACING = -0.1
-const MARKER_EMBED = 0.08 // meters the start/goal markers sit inside the text's left/right edge,
+const MARKER_EMBED = 0.2 // meters the start/goal markers sit inside the text's left/right edge,
                           // so they're adjacent to (overlapping) the text rather than floating
                           // just outside it
 

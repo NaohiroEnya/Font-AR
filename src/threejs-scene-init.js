@@ -60,7 +60,7 @@ const isPointInsideMesh = (point, mesh) => {
   return pointRaycaster.intersectObject(mesh, false).length % 2 === 1
 }
 
-const MARKER_RADIUS = 0.12
+const MARKER_RADIUS = 0.3
 const MARKER_TOUCH_DISTANCE = MARKER_RADIUS + PROBE_RADIUS
 const createMarker = (color) => {
   const mesh = new THREE.Mesh(
