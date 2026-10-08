@@ -28,6 +28,10 @@ export const createRunRecorder = ({getSourceCanvas, drawOverlay}) => {
   let session = null
 
   const stopTracks = (s) => s.stream.getTracks().forEach((track) => track.stop())
+  const cleanup = (s) => {
+    stopTracks(s)
+    s.canvas.remove()
+  }
 
   const discard = () => {
     const s = session
@@ -40,31 +44,45 @@ export const createRunRecorder = ({getSourceCanvas, drawOverlay}) => {
     if (s.recorder.state !== 'inactive') {
       s.recorder.stop()
     }
-    stopTracks(s)
+    cleanup(s)
   }
 
-  // Begins a fresh recording, throwing away any one still in progress.
+  // Begins a fresh recording, throwing away any one still in progress. Never throws: if the
+  // browser refuses (an unsupported option, say), there's just no recording for this run.
   const start = () => {
     discard()
     const source = getSourceCanvas()
     if (!mimeType || !source || !source.width || !source.height) {
       return
     }
-    const width = Math.min(source.width, MAX_VIDEO_WIDTH)
-    const height = Math.round((width * source.height) / source.width)
-    const canvas = document.createElement('canvas')
-    canvas.width = width
-    canvas.height = height
-    const stream = canvas.captureStream(FRAME_RATE)
-    const recorder = new MediaRecorder(stream, {mimeType, videoBitsPerSecond: VIDEO_BITS_PER_SECOND})
-    const chunks = []
-    recorder.ondataavailable = (event) => {
-      if (event.data && event.data.size > 0) {
-        chunks.push(event.data)
+    let canvas = null
+    try {
+      const width = Math.min(source.width, MAX_VIDEO_WIDTH)
+      const height = Math.round((width * source.height) / source.width)
+      canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      // Kept in the page (invisible, 1px) rather than detached: Safari doesn't reliably feed
+      // frames from a canvas that isn't part of the document into a captured stream.
+      canvas.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none'
+      document.body.appendChild(canvas)
+      const stream = canvas.captureStream(FRAME_RATE)
+      const recorder = new MediaRecorder(stream, {mimeType, videoBitsPerSecond: VIDEO_BITS_PER_SECOND})
+      const chunks = []
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          chunks.push(event.data)
+        }
+      }
+      session = {recorder, stream, canvas, ctx: canvas.getContext('2d'), chunks, source}
+      recorder.start(1000)
+    } catch (error) {
+      console.warn('Run recording unavailable:', error)
+      session = null
+      if (canvas) {
+        canvas.remove()
       }
     }
-    session = {recorder, stream, canvas, ctx: canvas.getContext('2d'), chunks, source}
-    recorder.start(1000)
   }
 
   // Call once per rendered frame, after the AR canvas has been drawn for that frame.
@@ -90,7 +108,7 @@ export const createRunRecorder = ({getSourceCanvas, drawOverlay}) => {
       captureFrame() // make sure the very last frame (the one that cleared) is in the video
       session = null
       s.recorder.onstop = () => {
-        stopTracks(s)
+        cleanup(s)
         const baseType = mimeType.split(';')[0]
         const extension = baseType === 'video/mp4' ? 'mp4' : 'webm'
         const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)

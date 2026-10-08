@@ -569,23 +569,24 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
     }
 
     // Finished after the HUD text above has switched to "CLEAR!", so the video's last frame shows it.
-    if (justCleared && recorder.supported) {
+    if (justCleared) {
       const token = (clearVideoToken += 1)
       clearVideo = null
       clearSaveEl.hidden = false
       clearSaveEl.disabled = true
+      if (!recorder.supported) {
+        // Say so instead of silently showing no button, so it's clear why there's no video.
+        clearSaveEl.textContent = 'この端末は動画保存に非対応です'
+        return
+      }
       clearSaveEl.textContent = '動画を準備中…'
       recorder.finish().then((file) => {
         if (token !== clearVideoToken) {
           return // dismissed (or another run started) while the video was being finalized
         }
         clearVideo = file
-        if (file) {
-          clearSaveEl.disabled = false
-          clearSaveEl.textContent = '動画を保存'
-        } else {
-          clearSaveEl.hidden = true
-        }
+        clearSaveEl.disabled = !file
+        clearSaveEl.textContent = file ? '動画を保存' : '動画を保存できませんでした'
       })
     }
   }
