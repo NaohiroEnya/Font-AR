@@ -20,6 +20,25 @@ body {
   pointer-events: none;
 }
 
+#rod-length-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 14px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+  pointer-events: auto;
+}
+
+#rod-length {
+  flex: 1;
+}
+
+#rod-length-value {
+  min-width: 3.2em;
+  text-align: right;
+}
+
 #instructions {
   margin: 0 0 10px;
   font-size: 14px;

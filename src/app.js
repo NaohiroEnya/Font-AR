@@ -42,9 +42,16 @@ const handleSelectionChange = (group) => {
   }
 }
 
-const {pipelineModule, setSelectedScale, deleteSelected, deselect} =
+const {pipelineModule, setSelectedScale, setRodLength, deleteSelected, deselect} =
   initScenePipelineModule({onSelectionChange: handleSelectionChange})
 
+const rodLengthInput = document.getElementById('rod-length')
+const rodLengthValue = document.getElementById('rod-length-value')
+rodLengthInput.addEventListener('input', (event) => {
+  const length = Number(event.target.value)
+  rodLengthValue.textContent = `${length}m`
+  setRodLength(length)
+})
 selectionSizeInput.addEventListener('input', (event) => {
   setSelectedScale(Number(event.target.value))
 })

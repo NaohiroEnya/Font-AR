@@ -36,28 +36,49 @@ const CONTACT_RADIAL_SAMPLES = 8 // extra points checked around each length samp
 // face happens to point away from the scene's fixed directional light. Because it's still a real
 // object in the SLAM world-space scene (not a 2D screen overlay), it visually pierces through
 // (or is occluded by) text placed in the room as the device moves through space.
-const createProbeRod = () => {
-  const geometry = new THREE.CylinderGeometry(PROBE_RADIUS, PROBE_RADIUS, PROBE_LENGTH, 20)
+const buildRodGeometry = (length) => {
+  const geometry = new THREE.CylinderGeometry(PROBE_RADIUS, PROBE_RADIUS, length, 20)
   geometry.rotateX(-Math.PI / 2) // cylinder's axis (Y) now points down the camera's forward axis (-Z)
-  geometry.translate(0, PROBE_Y_OFFSET, -(PROBE_NEAR + PROBE_LENGTH / 2))
+  geometry.translate(0, PROBE_Y_OFFSET, -(PROBE_NEAR + length / 2))
+  return geometry
+}
+
+const createProbeRod = (length) => {
   const material = new THREE.MeshBasicMaterial({color: 0x2979ff})
-  const rod = new THREE.Mesh(geometry, material)
+  const rod = new THREE.Mesh(buildRodGeometry(length), material)
   rod.castShadow = true
   return rod
 }
 
-// Casts a ray from `point` and counts how many times it crosses `mesh`. An odd count means the
-// point is inside the mesh's solid volume -- true for a ray in any fixed direction through a
-// closed (watertight) manifold, which is what THREE.ExtrudeGeometry produces, so this works
-// regardless of how the text has been rotated to face the camera. The direction is tilted
-// slightly off any axis (rather than a plain "straight up") so it doesn't graze exactly along a
-// triangle edge or through a shared vertex -- which, for symmetric glyphs like 回, a purely
-// vertical ray through the horizontal center reliably does, double-counting that crossing.
-const CAST_DIR = new THREE.Vector3(0.0173, 1, 0.0111).normalize()
-const pointRaycaster = new THREE.Raycaster()
-const isPointInsideMesh = (point, mesh) => {
-  pointRaycaster.set(point, CAST_DIR)
-  return pointRaycaster.intersectObject(mesh, false).length % 2 === 1
+// True if `local` (a point already in the text mesh's own local space) is inside the text's solid
+// volume: within the extrusion depth, and with a non-zero winding number against the glyph
+// outlines (outer contours and holes wind oppositely, so a point in a hole nets to zero). This is
+// the same answer a ray-parity test against the extruded mesh would give, but it only walks a few
+// hundred outline points -- the mesh test scanned every triangle (thousands, for the more detailed
+// fonts) for each of the ~1000 sample points per frame.
+const isPointInsideGlyph = (local, glyph) => {
+  if (local.z < glyph.zMin || local.z > glyph.zMax) {
+    return false
+  }
+  const {x, y} = local
+  let winding = 0
+  for (const c of glyph.contours) {
+    if (x < c.minX || x > c.maxX || y < c.minY || y > c.maxY) {
+      continue
+    }
+    const p = c.pts
+    for (let i = 0, j = p.length - 2; i < p.length; j = i, i += 2) {
+      const y1 = p[j + 1]
+      const y2 = p[i + 1]
+      if (y1 <= y !== y2 <= y) {
+        const x1 = p[j]
+        if (x1 + ((y - y1) / (y2 - y1)) * (p[i] - x1) > x) {
+          winding += y2 > y1 ? 1 : -1
+        }
+      }
+    }
+  }
+  return winding !== 0
 }
 
 const MARKER_RADIUS = 0.3
@@ -156,7 +177,9 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
   const pointer = new THREE.Vector2()
   const placedTexts = [] // groups currently placed in the scene, for tap-to-select
   const textBoxes = new Map() // group -> world-space Box3, refreshed whenever a group moves/resizes
-  const probeRod = createProbeRod()
+  const textInverses = new Map() // group -> inverse of its mesh's world matrix, refreshed with the box
+  let rodLength = PROBE_LENGTH
+  const probeRod = createProbeRod(rodLength)
 
   let selectedGroup = null
   let dragTouchId = null // touch identifier currently dragging selectedGroup, or null
@@ -166,7 +189,7 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
   const getInputFontId = () => document.getElementById('font-select').value || undefined
 
   // A cheap AABB pre-filter for isRodTouchingAnyText below, not the actual contact boundary --
-  // that's still the mesh's exact solid volume (isPointInsideMesh). Computed from the text mesh
+  // that's still the text's exact solid volume (isPointInsideGlyph). Computed from the text mesh
   // alone (group.children[0]), not the whole group: the group can also carry UI-only children --
   // the selection ring, while a text is selected -- and including those inflated this box hugely
   // (a wide/flat ring's own bounding box extends far past the actual glyph's shallow extruded
@@ -187,6 +210,9 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
       mesh.updateWorldMatrix(true, false)
     }
     textBoxes.set(group, new THREE.Box3().setFromObject(mesh || group))
+    if (mesh) {
+      textInverses.set(group, mesh.matrixWorld.clone().invert())
+    }
   }
 
   const placeTextAt = async ({scene, camera}, point) => {
@@ -203,6 +229,7 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
     scene.remove(group)
     placedTexts.splice(placedTexts.indexOf(group), 1)
     textBoxes.delete(group)
+    textInverses.delete(group)
   }
 
   const deselect = () => {
@@ -262,7 +289,7 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
   // own local X/Y axes in world space, so isRodTouchingAnyText can offset sample points around
   // the centerline to cover the rod's actual cross-section (see CONTACT_RADIAL_SAMPLES above).
   const rodNearLocal = new THREE.Vector3(0, PROBE_Y_OFFSET, -PROBE_NEAR)
-  const rodFarLocal = new THREE.Vector3(0, PROBE_Y_OFFSET, -(PROBE_NEAR + PROBE_LENGTH))
+  const rodFarLocal = new THREE.Vector3(0, PROBE_Y_OFFSET, -(PROBE_NEAR + rodLength))
   const rodNear = new THREE.Vector3()
   const rodFar = new THREE.Vector3()
   const rodLine = new THREE.Line3(rodNear, rodFar)
@@ -285,32 +312,44 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
   // so leaving the actual glyph shape (a gap between two characters, or the hollow center of one
   // like 回) reads as OUT, while any part of the rod's real volume still touching stroke material
   // anywhere along its length reads SAFE, including a partial edge-on overlap.
-  const sampleCount = Math.ceil(PROBE_LENGTH / CONTACT_SAMPLE_STEP)
+  const point = new THREE.Vector3()
+  const testPoint = new THREE.Vector3()
+  const localPoint = new THREE.Vector3()
+  const isInsideText = (worldPoint, box, inverse, glyph) =>
+    box.containsPoint(worldPoint) && isPointInsideGlyph(localPoint.copy(worldPoint).applyMatrix4(inverse), glyph)
+
   const isRodTouchingAnyText = () => {
-    const point = new THREE.Vector3()
-    const testPoint = new THREE.Vector3()
+    const sampleCount = Math.ceil(rodLength / CONTACT_SAMPLE_STEP)
 
     for (let i = 0; i <= sampleCount; i += 1) {
       point.lerpVectors(rodNear, rodFar, i / sampleCount)
       for (const group of placedTexts) {
-        const mesh = group.children[0]
+        const glyph = group.userData.glyph
         const box = textBoxes.get(group)
-        if (!mesh || !box) continue // empty group (e.g. blank input), or not yet placed
+        const inverse = textInverses.get(group)
+        if (!glyph || !box || !inverse) continue // empty group (e.g. blank input), or not yet placed
 
-        if (box.containsPoint(point) && isPointInsideMesh(point, mesh)) {
+        if (isInsideText(point, box, inverse, glyph)) {
           return true
         }
         for (const angle of radialAngles) {
           testPoint.copy(point)
             .addScaledVector(rodAxisX, Math.cos(angle) * PROBE_RADIUS)
             .addScaledVector(rodAxisY, Math.sin(angle) * PROBE_RADIUS)
-          if (box.containsPoint(testPoint) && isPointInsideMesh(testPoint, mesh)) {
+          if (isInsideText(testPoint, box, inverse, glyph)) {
             return true
           }
         }
       }
     }
     return false
+  }
+
+  const setRodLength = (length) => {
+    rodLength = length
+    rodFarLocal.z = -(PROBE_NEAR + length)
+    probeRod.geometry.dispose()
+    probeRod.geometry = buildRodGeometry(length)
   }
 
   const initXrScene = ({scene, camera, renderer}) => {
@@ -531,5 +570,5 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
     },
   }
 
-  return {pipelineModule, setSelectedScale, deleteSelected, deselect}
+  return {pipelineModule, setSelectedScale, setRodLength, deleteSelected, deselect}
 }

@@ -30,7 +30,7 @@ export const DEFAULT_FONT_ID = FONTS[0].id
 
 export const TEXT_WORLD_HEIGHT = 6.25 // meters
 const TEXT_THICKNESS_RATIO = 0.12 // extrusion depth, as a fraction of worldHeight
-const TEXT_OVERALL_OPACITY = 0.8
+const TEXT_OVERALL_OPACITY = 0.65
 // Multi-character text packs its glyphs as tight as opentype.js's own letter-spacing option
 // allows (a negative value pulls characters closer together), rather than leaving the font's
 // default advance width -- this was previously a runtime slider the player could adjust, but
@@ -107,7 +107,7 @@ const pointInPolygon = (point, polygon) => {
 const pathToShapes = (otPath) => {
   const contours = contoursOf(otPath)
   if (contours.length === 0) {
-    return []
+    return {shapes: [], outlines: []}
   }
   // The largest contour in any run of text is always an outer (solid) one -- a hole is by
   // definition inside something bigger -- so its winding direction is this font's "solid" sign.
@@ -115,15 +115,17 @@ const pathToShapes = (otPath) => {
   const solidSign = Math.sign(largest.area)
   const isSolid = (c) => c.area * solidSign > 0
   const solids = contours.filter(isSolid).map((c) => ({shape: new THREE.Shape(c.points), points: c.points}))
+  const usedOutlines = solids.map((s) => s.points)
   contours
     .filter((c) => !isSolid(c))
     .forEach((hole) => {
       const owner = solids.find((s) => pointInPolygon(hole.points[0], s.points))
       if (owner) {
         owner.shape.holes.push(new THREE.Path(hole.points))
+        usedOutlines.push(hole.points)
       }
     })
-  return solids.map((s) => s.shape)
+  return {shapes: solids.map((s) => s.shape), outlines: usedOutlines}
 }
 
 // Builds a group showing `text` as a solid, shadow-casting 3D object sized so its world-space
@@ -133,7 +135,7 @@ export const createTextMesh = async (text, {worldHeight = TEXT_WORLD_HEIGHT, col
   const font = await loadFont(fontId)
   const letterSpacing = text.length > 1 ? MAX_TIGHT_LETTER_SPACING : 0
   const otPath = font.getPath(text, 0, 0, 1, {letterSpacing}) // fontSize=1 -> coordinates are fractions of an em
-  const shapes = pathToShapes(otPath)
+  const {shapes, outlines} = pathToShapes(otPath)
 
   const group = new THREE.Group()
   if (shapes.length === 0) {
@@ -153,9 +155,12 @@ export const createTextMesh = async (text, {worldHeight = TEXT_WORLD_HEIGHT, col
   geometry.scale(scale, -scale, scale)
   geometry.computeBoundingBox()
   const bounds = geometry.boundingBox
+  // Captured now: computeBoundingBox() below mutates this same Box3 in place once translated.
+  const centerOffsetX = (bounds.min.x + bounds.max.x) / 2
+  const baseOffsetY = bounds.min.y
   geometry.translate(
-    -(bounds.min.x + bounds.max.x) / 2,
-    -bounds.min.y,
+    -centerOffsetX,
+    -baseOffsetY,
     -(bounds.min.z + bounds.max.z) / 2
   )
 
@@ -172,6 +177,34 @@ export const createTextMesh = async (text, {worldHeight = TEXT_WORLD_HEIGHT, col
   mesh.castShadow = true
   mesh.receiveShadow = true
   group.add(mesh)
+
+  // The same outlines the mesh was extruded from, mapped into the mesh's final local coordinates
+  // (same scale / Y-flip / centering as the geometry above) as flat [x0, y0, x1, y1, ...] arrays,
+  // each with its own 2D bounds. Since the text is a straight extrusion, a point is inside the
+  // solid exactly when its z is within the extrusion depth and its (x, y) is inside the outlines --
+  // which the contact check does with a cheap winding-number test instead of ray-casting against
+  // thousands of triangles every frame.
+  geometry.computeBoundingBox()
+  const depthBounds = geometry.boundingBox
+  group.userData.glyph = {
+    zMin: depthBounds.min.z,
+    zMax: depthBounds.max.z,
+    contours: outlines.map((points) => {
+      const pts = new Float32Array(points.length * 2)
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+      points.forEach((p, i) => {
+        const x = p.x * scale - centerOffsetX
+        const y = -p.y * scale - baseOffsetY
+        pts[i * 2] = x
+        pts[i * 2 + 1] = y
+        if (x < minX) minX = x
+        if (x > maxX) maxX = x
+        if (y < minY) minY = y
+        if (y > maxY) maxY = y
+      })
+      return {pts, minX, maxX, minY, maxY}
+    }),
+  }
 
   // Local-space points just inside the text's corners, placed diagonally opposite each other
   // (start near the bottom-left, goal near the top-right) so the course spans the object's full
