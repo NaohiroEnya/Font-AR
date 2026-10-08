@@ -207,3 +207,17 @@ body {
   background: #2979ff;
   color: #fff;
 }
+
+.run-overlay-button.secondary {
+  margin-top: 0;
+  background: #fff;
+  color: #1c1c1e;
+}
+
+.run-overlay-button[hidden] {
+  display: none;
+}
+
+.run-overlay-button:disabled {
+  opacity: 0.6;
+}

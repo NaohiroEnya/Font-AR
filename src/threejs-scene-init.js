@@ -7,6 +7,7 @@
 import * as THREE from 'three'
 
 import {createTextMesh, loadFont} from './text-plane'
+import {createRunRecorder} from './run-recorder'
 
 const PROBE_RADIUS = 0.07 // meters -- thick enough to read clearly on a phone screen
 const PROBE_LENGTH = 4.5
@@ -428,14 +429,112 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
     gameoverOverlayEl.hidden = true
   })
 
+  // Run recording (START -> CLEAR). The SAFE/OUT badge and timer are DOM elements, so they aren't
+  // part of the AR canvas; each recorded frame gets them painted on from their live on-screen
+  // position, size, colors, and text.
+  let liveCanvas = null
+  // Background colors are chosen from the elements' state classes rather than read back from the
+  // live style, which would catch the CSS color transition part-way through a change.
+  const statusColor = () => (statusEl.classList.contains('safe') ? 'rgba(47, 163, 107, 0.9)' : 'rgba(224, 102, 61, 0.9)')
+  const timerColor = () => {
+    if (timerEl.classList.contains('cleared')) return 'rgba(173, 80, 255, 0.9)'
+    if (timerEl.classList.contains('gameover')) return 'rgba(200, 40, 40, 0.92)'
+    return 'rgba(0, 0, 0, 0.55)'
+  }
+  const drawHudPill = (ctx, el, k, background) => {
+    const rect = el.getBoundingClientRect()
+    if (!rect.width) {
+      return
+    }
+    const style = getComputedStyle(el)
+    const x = rect.left * k
+    const y = rect.top * k
+    const w = rect.width * k
+    const h = rect.height * k
+    ctx.fillStyle = background
+    ctx.beginPath()
+    ctx.moveTo(x + h / 2, y)
+    ctx.arcTo(x + w, y, x + w, y + h, h / 2)
+    ctx.arcTo(x + w, y + h, x, y + h, h / 2)
+    ctx.arcTo(x, y + h, x, y, h / 2)
+    ctx.arcTo(x, y, x + w, y, h / 2)
+    ctx.fill()
+    ctx.fillStyle = style.color
+    ctx.font = `${style.fontWeight} ${parseFloat(style.fontSize) * k}px ${style.fontFamily}`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(el.textContent, x + w / 2, y + h / 2)
+  }
+  const recorder = createRunRecorder({
+    getSourceCanvas: () => liveCanvas,
+    drawOverlay: (ctx, k) => {
+      drawHudPill(ctx, statusEl, k, statusColor())
+      drawHudPill(ctx, timerEl, k, timerColor())
+    },
+  })
+
+  // The recording of the run that just cleared, held in memory only while the CLEAR screen is up --
+  // dismissing it (RETRY) or starting another run drops it, and nothing is ever written anywhere
+  // unless the player taps save.
+  const clearSaveEl = document.getElementById('clear-save')
+  let clearVideo = null
+  let clearVideoToken = 0 // so a recording still being finalized can tell its screen was dismissed
+  const discardClearVideo = () => {
+    clearVideoToken += 1
+    clearVideo = null
+    clearSaveEl.hidden = true
+  }
+
+  const downloadFile = (file) => {
+    const url = URL.createObjectURL(file)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = file.name
+    link.click()
+    setTimeout(() => URL.revokeObjectURL(url), 10000)
+  }
+
+  // Web pages can't write to the camera roll directly; the share sheet's "Save Video" (iOS) is the
+  // way in. It has to be opened from this tap, hence the File being ready beforehand. Browsers
+  // without file sharing (desktop) get a plain download instead.
+  clearSaveEl.addEventListener('click', async () => {
+    const file = clearVideo
+    if (!file) {
+      return
+    }
+    if (navigator.canShare && navigator.canShare({files: [file]})) {
+      try {
+        await navigator.share({files: [file], title: 'Font AR'})
+      } catch (error) {
+        if (error.name !== 'AbortError') {
+          downloadFile(file)
+        }
+      }
+    } else {
+      downloadFile(file)
+    }
+  })
+
   const clearOverlayEl = document.getElementById('clear-overlay')
   const clearTimeEl = document.getElementById('clear-time')
   document.getElementById('clear-retry').addEventListener('click', () => {
     runState = 'idle'
     clearOverlayEl.hidden = true
+    discardClearVideo()
   })
 
+  let wasTouchingStart = false
+
   const updateRunState = (safe, touchingStart, touchingGoal) => {
+    let justCleared = false
+    // A new recording starts each time the rod newly touches START (not every frame it stays
+    // there), so going back to START mid-run begins the video over.
+    if (touchingStart && !wasTouchingStart) {
+      recorder.start()
+      discardClearVideo()
+    }
+    wasTouchingStart = touchingStart
+
     if (touchingStart) {
       runState = 'running'
       runStartedAt = performance.now()
@@ -444,11 +543,13 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
       finalElapsedMs = performance.now() - runStartedAt
       clearTimeEl.textContent = formatSeconds(finalElapsedMs)
       clearOverlayEl.hidden = false
+      justCleared = true
     } else if (runState === 'running' && !safe) {
       runState = 'gameover'
       finalElapsedMs = performance.now() - runStartedAt
       gameoverTimeEl.textContent = formatSeconds(finalElapsedMs)
       gameoverOverlayEl.hidden = false
+      recorder.discard()
       // Two hard pulses, for impact. The Vibration API isn't implemented in iOS Safari, so this is
       // a silent no-op there (and on desktop); navigator.vibrate may also just return false if the
       // browser decides the page hasn't had enough user interaction yet.
@@ -466,6 +567,27 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
     } else {
       setTimerText(`GAME OVER (${formatSeconds(finalElapsedMs)})`, 'gameover')
     }
+
+    // Finished after the HUD text above has switched to "CLEAR!", so the video's last frame shows it.
+    if (justCleared && recorder.supported) {
+      const token = (clearVideoToken += 1)
+      clearVideo = null
+      clearSaveEl.hidden = false
+      clearSaveEl.disabled = true
+      clearSaveEl.textContent = '動画を準備中…'
+      recorder.finish().then((file) => {
+        if (token !== clearVideoToken) {
+          return // dismissed (or another run started) while the video was being finalized
+        }
+        clearVideo = file
+        if (file) {
+          clearSaveEl.disabled = false
+          clearSaveEl.textContent = '動画を保存'
+        } else {
+          clearSaveEl.hidden = true
+        }
+      })
+    }
   }
 
   const pipelineModule = {
@@ -475,6 +597,7 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
       const {scene, camera, renderer} = XR8.Threejs.xrScene()
       liveCamera = camera
       liveScene = scene
+      liveCanvas = canvas
       loadFont() // kick off the font fetch/parse now, so it's likely ready by the first tap
 
       initXrScene({scene, camera, renderer})
@@ -568,6 +691,12 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
       updateContactStatus(safe)
       updateRunState(safe, touchingStart, touchingGoal)
     },
+
+    // Runs after the camera feed and 3D scene have been drawn for this frame (this module is last
+    // in the pipeline), so the AR canvas is complete and can be copied into a recording.
+    onRender: () => {
+      recorder.captureFrame()
+    }
   }
 
   return {pipelineModule, setSelectedScale, setRodLength, deleteSelected, deselect}
