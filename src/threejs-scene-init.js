@@ -410,6 +410,12 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
       finalElapsedMs = performance.now() - runStartedAt
       gameoverTimeEl.textContent = formatSeconds(finalElapsedMs)
       gameoverOverlayEl.hidden = false
+      // Two hard pulses, for impact. The Vibration API isn't implemented in iOS Safari, so this is
+      // a silent no-op there (and on desktop); navigator.vibrate may also just return false if the
+      // browser decides the page hasn't had enough user interaction yet.
+      if (navigator.vibrate) {
+        navigator.vibrate([400, 120, 400])
+      }
     }
 
     if (runState === 'idle') {
