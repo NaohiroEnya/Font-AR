@@ -2,13 +2,31 @@
 // font file and extruding them with three.js. A vector outline gives crisp edges at any size and
 // a single continuous volume, unlike the earlier canvas-texture + stacked-layers approach, whose
 // many overlapping semi-transparent planes both blurred edges and made opacity compound far
-// beyond the intended value. The bundled font is a subset of Noto Sans JP -- ASCII, kana, and the
-// ~3000 Jouyou/Kyoiku-use kanji -- keeping the download small while covering ordinary Japanese
-// input; a character outside that set won't render.
+// beyond the intended value. The bundled fonts are subsets -- ASCII, kana, and the ~3000
+// Jouyou/Kyoiku-use kanji -- keeping the download small while covering ordinary Japanese input;
+// a character outside that set (or missing from a given font) won't render properly.
 import * as THREE from 'three'
 import opentype from 'opentype.js'
 
-import fontUrl from './assets/NotoSansJP-subset.otf?url'
+import notoSansUrl from './assets/NotoSansJP-subset.otf?url'
+import zenMaruUrl from './assets/ZenMaruGothic-subset.ttf?url'
+import delaUrl from './assets/DelaGothicOne-subset.ttf?url'
+import notoSerifUrl from './assets/NotoSerifJP-subset.ttf?url'
+import zenAntiqueUrl from './assets/ZenAntique-subset.ttf?url'
+
+// Fonts the player can pick from, all open-licence (OFL) Google Fonts families chosen so their
+// shapes read as clearly different at a glance. Each is a subset of the same character set
+// (ASCII, kana, ~3000 Jouyou/Kyoiku-use kanji) bundled with the app rather than fetched from
+// Google at runtime, so the app still has no external font dependency; only the font actually
+// in use is downloaded.
+export const FONTS = [
+  {id: 'noto-sans', group: 'ゴシック', label: 'Noto Sans JP（標準）', url: notoSansUrl},
+  {id: 'zen-maru', group: 'ゴシック', label: 'Zen Maru Gothic（丸）', url: zenMaruUrl},
+  {id: 'dela-gothic', group: 'ゴシック', label: 'Dela Gothic One（極太）', url: delaUrl},
+  {id: 'noto-serif', group: '明朝', label: 'Noto Serif JP（標準）', url: notoSerifUrl},
+  {id: 'zen-antique', group: '明朝', label: 'Zen Antique（古風）', url: zenAntiqueUrl},
+]
+export const DEFAULT_FONT_ID = FONTS[0].id
 
 export const TEXT_WORLD_HEIGHT = 6.25 // meters
 const TEXT_THICKNESS_RATIO = 0.12 // extrusion depth, as a fraction of worldHeight
@@ -24,21 +42,24 @@ const MARKER_EMBED = 0.2 // meters the start/goal markers sit inside the text's 
                           // so they're adjacent to (overlapping) the text rather than floating
                           // just outside it
 
-let fontPromise = null
-export const loadFont = () => {
-  if (!fontPromise) {
-    fontPromise = fetch(fontUrl)
-      .then((res) => res.arrayBuffer())
-      .then((buffer) => opentype.parse(buffer))
+const fontPromises = new Map()
+export const loadFont = (fontId = DEFAULT_FONT_ID) => {
+  if (!fontPromises.has(fontId)) {
+    const {url} = FONTS.find((f) => f.id === fontId) || FONTS[0]
+    fontPromises.set(
+      fontId,
+      fetch(url)
+        .then((res) => res.arrayBuffer())
+        .then((buffer) => opentype.parse(buffer))
+    )
   }
-  return fontPromise
+  return fontPromises.get(fontId)
 }
 
 // Splits an opentype.js path into its individual closed contours, converting each to a
-// three.js Path so its point-based signed area can be measured. In this font's outlines, a
-// negative signed area is a solid (fillable) contour and a positive one is a hole -- empirically
-// verified against a character with a nested hole (回), which produced alternating signs at each
-// nesting level.
+// three.js Path so its point-based signed area can be measured. Which sign means "solid" depends
+// on the font's outline format (CFF-based .otf and TrueType-based .ttf wind outer contours in
+// opposite directions), so pathToShapes works that out per run of text rather than assuming it.
 const contoursOf = (otPath) => {
   const contours = []
   let current = null
@@ -85,9 +106,17 @@ const pointInPolygon = (point, polygon) => {
 // its outer frame's hole as its own shape, rather than being merged into one).
 const pathToShapes = (otPath) => {
   const contours = contoursOf(otPath)
-  const solids = contours.filter((c) => c.area < 0).map((c) => ({shape: new THREE.Shape(c.points), points: c.points}))
+  if (contours.length === 0) {
+    return []
+  }
+  // The largest contour in any run of text is always an outer (solid) one -- a hole is by
+  // definition inside something bigger -- so its winding direction is this font's "solid" sign.
+  const largest = contours.reduce((a, b) => (Math.abs(b.area) > Math.abs(a.area) ? b : a))
+  const solidSign = Math.sign(largest.area)
+  const isSolid = (c) => c.area * solidSign > 0
+  const solids = contours.filter(isSolid).map((c) => ({shape: new THREE.Shape(c.points), points: c.points}))
   contours
-    .filter((c) => c.area >= 0)
+    .filter((c) => !isSolid(c))
     .forEach((hole) => {
       const owner = solids.find((s) => pointInPolygon(hole.points[0], s.points))
       if (owner) {
@@ -100,8 +129,8 @@ const pathToShapes = (otPath) => {
 // Builds a group showing `text` as a solid, shadow-casting 3D object sized so its world-space
 // height is `worldHeight` meters. The group is centered on X/Z with its bottom at local y=0, so
 // placing it at a ground hit point sits it directly on the ground.
-export const createTextMesh = async (text, {worldHeight = TEXT_WORLD_HEIGHT, color = '#ff3b30'} = {}) => {
-  const font = await loadFont()
+export const createTextMesh = async (text, {worldHeight = TEXT_WORLD_HEIGHT, color = '#ff3b30', fontId = DEFAULT_FONT_ID} = {}) => {
+  const font = await loadFont(fontId)
   const letterSpacing = text.length > 1 ? MAX_TIGHT_LETTER_SPACING : 0
   const otPath = font.getPath(text, 0, 0, 1, {letterSpacing}) // fontSize=1 -> coordinates are fractions of an em
   const shapes = pathToShapes(otPath)

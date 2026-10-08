@@ -1,6 +1,7 @@
 // app.js is the main entry point for your three.js 8th Wall app.
 
 import {initScenePipelineModule} from './threejs-scene-init'
+import {FONTS, loadFont} from './text-plane'
 import * as THREE from 'three'
 
 window.THREE = THREE
@@ -12,6 +13,24 @@ const instructionsEl = document.getElementById('instructions')
 const placementPanel = document.getElementById('placement-panel')
 const selectionPanel = document.getElementById('selection-panel')
 const selectionSizeInput = document.getElementById('selection-size')
+const fontSelect = document.getElementById('font-select')
+
+FONTS.forEach(({id, group, label}, i) => {
+  let optgroup = fontSelect.querySelector(`optgroup[label="${group}"]`)
+  if (!optgroup) {
+    optgroup = document.createElement('optgroup')
+    optgroup.label = group
+    fontSelect.appendChild(optgroup)
+  }
+  const option = document.createElement('option')
+  option.value = id
+  option.textContent = label
+  option.selected = i === 0
+  optgroup.appendChild(option)
+})
+// Start downloading the newly chosen font right away, so the first placement with it doesn't
+// stall on the fetch.
+fontSelect.addEventListener('change', () => loadFont(fontSelect.value))
 
 const handleSelectionChange = (group) => {
   const selected = !!group

@@ -163,6 +163,7 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
   let liveScene = null
 
   const getInputText = () => document.getElementById('text-input').value.trim() || 'AR'
+  const getInputFontId = () => document.getElementById('font-select').value || undefined
 
   // A cheap AABB pre-filter for isRodTouchingAnyText below, not the actual contact boundary --
   // that's still the mesh's exact solid volume (isPointInsideMesh). Computed from the text mesh
@@ -189,7 +190,7 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
   }
 
   const placeTextAt = async ({scene, camera}, point) => {
-    const group = await createTextMesh(getInputText())
+    const group = await createTextMesh(getInputText(), {fontId: getInputFontId()})
     group.position.copy(point)
     group.quaternion.copy(camera.quaternion) // face the viewer at the moment it's placed
     addStartGoalMarkers(group)
