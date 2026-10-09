@@ -221,3 +221,284 @@ body {
 .run-overlay-button:disabled {
   opacity: 0.6;
 }
+
+.run-overlay-best {
+  font-size: 15px;
+  font-weight: bold;
+  color: #ffd54a;
+  min-height: 1.2em;
+}
+
+/* ---- modes: which parts of the page show in each ---- */
+body.mode-menu #ui,
+body.mode-menu #contact-status,
+body.mode-menu #timer-status,
+body.mode-hub #ui,
+body.mode-hub #contact-status,
+body.mode-hub #timer-status {
+  display: none;
+}
+
+/* A course fixes its own text, font, size, and rod length. */
+body.mode-course #placement-panel,
+body.mode-course #rod-length-row,
+body.mode-course #selection-size-row {
+  display: none;
+}
+
+.back-button {
+  border: none;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 13px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+#mode-back {
+  display: none;
+  position: fixed;
+  top: calc(16px + env(safe-area-inset-top));
+  left: 12px;
+  z-index: 15;
+}
+
+body.mode-single #mode-back,
+body.mode-course #mode-back {
+  display: block;
+}
+
+.back-button.inline {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* ---- full-screen screens (menu, community hub, course editor) ---- */
+.screen {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  padding: calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
+  overflow-y: auto;
+  background: rgba(16, 20, 32, 0.96);
+  color: #fff;
+}
+
+.screen[hidden] {
+  display: none;
+}
+
+#menu-screen {
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  text-align: center;
+}
+
+.menu-title {
+  margin: 0;
+  font-size: 40px;
+  letter-spacing: 0.06em;
+}
+
+.menu-lead {
+  margin: 0 0 12px;
+  font-size: 14px;
+  opacity: 0.8;
+}
+
+.menu-button {
+  width: min(100%, 360px);
+  padding: 18px 16px;
+  border: none;
+  border-radius: 16px;
+  font-size: 20px;
+  font-weight: bold;
+  color: #fff;
+  background: #2979ff;
+}
+
+.menu-button + .menu-button {
+  background: #8e44ad;
+}
+
+.menu-button span {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: normal;
+  opacity: 0.85;
+}
+
+.screen-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.screen-header h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.tab {
+  flex: 1;
+  padding: 10px 6px;
+  border: none;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: bold;
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.tab.active {
+  color: #fff;
+  background: #8e44ad;
+}
+
+.screen-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.primary-button {
+  padding: 14px;
+  border: none;
+  border-radius: 12px;
+  font-size: 16px;
+  font-weight: bold;
+  color: #fff;
+  background: #2979ff;
+}
+
+.primary-button[hidden] {
+  display: none;
+}
+
+.course-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.course-item {
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.course-title {
+  font-size: 16px;
+  font-weight: bold;
+  overflow-wrap: anywhere;
+}
+
+.course-meta {
+  margin-top: 4px;
+  font-size: 12px;
+  opacity: 0.75;
+  overflow-wrap: anywhere;
+}
+
+.course-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.mini-button {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: bold;
+  color: #1c1c1e;
+  background: rgba(255, 255, 255, 0.85);
+}
+
+.mini-button.primary {
+  color: #fff;
+  background: #2979ff;
+}
+
+.mini-button.danger {
+  margin-left: auto;
+  color: #fff;
+  background: rgba(255, 59, 48, 0.85);
+}
+
+.course-empty {
+  margin: 24px 0;
+  font-size: 14px;
+  text-align: center;
+  opacity: 0.7;
+}
+
+.course-empty[hidden] {
+  display: none;
+}
+
+.form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.form input[type='text'],
+.form select {
+  padding: 12px;
+  border: none;
+  border-radius: 8px;
+  font-size: 16px;
+  color: #1c1c1e;
+  background: #fff;
+}
+
+.create-preview {
+  min-height: 90px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  border-radius: 12px;
+  font-size: 56px;
+  color: #ff3b30;
+  background: rgba(255, 255, 255, 0.08);
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 40;
+  max-width: calc(100% - 32px);
+  padding: 10px 18px;
+  border-radius: 999px;
+  font-size: 13px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.82);
+  text-align: center;
+}
+
+#toast[hidden] {
+  display: none;
+}
+

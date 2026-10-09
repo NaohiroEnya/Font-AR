@@ -163,7 +163,7 @@ const createSelectionRing = (group) => {
   return ring
 }
 
-export const initScenePipelineModule = ({onSelectionChange} = {}) => {
+export const initScenePipelineModule = ({onSelectionChange, onClear} = {}) => {
   // Plane used both as the raycast target for tap placement and as a shadow-catcher: it's
   // invisible except where a placed text object blocks the light, so text reads as sitting on
   // the ground rather than floating.
@@ -216,8 +216,26 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
     }
   }
 
+  // In community mode a fixed course ({text, fontId, scale}) is being played instead of whatever's
+  // typed into the input; sceneEpoch changes whenever the scene is reset, so a text that was still
+  // being built when that happened can tell it's no longer wanted.
+  let activeCourse = null
+  let sceneEpoch = 0
+  let placing = false
+
   const placeTextAt = async ({scene, camera}, point) => {
-    const group = await createTextMesh(getInputText(), {fontId: getInputFontId()})
+    const epoch = sceneEpoch
+    const course = activeCourse
+    const group = await createTextMesh(
+      course ? course.text : getInputText(),
+      {fontId: course ? course.fontId : getInputFontId()}
+    )
+    if (epoch !== sceneEpoch) {
+      return
+    }
+    if (course) {
+      group.scale.setScalar(course.scale)
+    }
     group.position.copy(point)
     group.quaternion.copy(camera.quaternion) // face the viewer at the moment it's placed
     addStartGoalMarkers(group)
@@ -268,7 +286,7 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
   }
 
   const setSelectedScale = (scale) => {
-    if (!selectedGroup) {
+    if (!selectedGroup || activeCourse) { // a course's size is part of the course
       return
     }
     selectedGroup.scale.setScalar(scale)
@@ -517,6 +535,7 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
 
   const clearOverlayEl = document.getElementById('clear-overlay')
   const clearTimeEl = document.getElementById('clear-time')
+  const clearBestEl = document.getElementById('clear-best')
   document.getElementById('clear-retry').addEventListener('click', () => {
     runState = 'idle'
     clearOverlayEl.hidden = true
@@ -542,6 +561,8 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
       runState = 'cleared'
       finalElapsedMs = performance.now() - runStartedAt
       clearTimeEl.textContent = formatSeconds(finalElapsedMs)
+      // In community mode the caller records the time and can hand back a line to show under it.
+      clearBestEl.textContent = (activeCourse && onClear && onClear({course: activeCourse, elapsedMs: finalElapsedMs})) || ''
       clearOverlayEl.hidden = false
       justCleared = true
     } else if (runState === 'running' && !safe) {
@@ -588,6 +609,34 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
         clearSaveEl.disabled = !file
         clearSaveEl.textContent = file ? '動画を保存' : '動画を保存できませんでした'
       })
+    }
+  }
+
+  // Clears everything back to a fresh scene: placed texts, selection, run state, overlays, any
+  // recording. Used whenever the player moves between modes/screens.
+  const resetScene = () => {
+    sceneEpoch += 1
+    deselect()
+    if (liveScene) {
+      ;[...placedTexts].forEach((group) => removeText(liveScene, group))
+    }
+    runState = 'idle'
+    wasTouchingStart = false
+    recorder.discard()
+    discardClearVideo()
+    gameoverOverlayEl.hidden = true
+    clearOverlayEl.hidden = true
+    setTimerText('スタートに触れて計測開始', null)
+  }
+
+  // Starts (or, with null, stops) playing a fixed course. Comparable times need the same rod for
+  // everyone, so a course always uses the default rod length.
+  const setCourse = (course) => {
+    resetScene()
+    activeCourse = course
+    if (course) {
+      setRodLength(PROBE_LENGTH)
+      loadFont(course.fontId)
     }
   }
 
@@ -640,9 +689,18 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
           return
         }
 
+        // A course is a single text; a second one only after the first is deleted.
+        if (placing || (activeCourse && placedTexts.length > 0)) {
+          return
+        }
         const [groundHit] = raycaster.intersectObject(ground)
         if (groundHit) {
-          await placeTextAt({scene, camera}, groundHit.point)
+          placing = true
+          try {
+            await placeTextAt({scene, camera}, groundHit.point)
+          } finally {
+            placing = false
+          }
         }
       }, true)
 
@@ -700,5 +758,5 @@ export const initScenePipelineModule = ({onSelectionChange} = {}) => {
     }
   }
 
-  return {pipelineModule, setSelectedScale, setRodLength, deleteSelected, deselect}
+  return {pipelineModule, setSelectedScale, setRodLength, deleteSelected, deselect, resetScene, setCourse}
 }

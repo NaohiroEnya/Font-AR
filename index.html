@@ -16,7 +16,7 @@
 
     <link rel="stylesheet" href="src/index.css">
   </head>
-  <body>
+  <body class="mode-menu">
     <!-- The main canvas used for drawing by the app. -->
     <canvas id="camerafeed"></canvas>
 
@@ -60,9 +60,64 @@
     <div id="clear-overlay" class="run-overlay" hidden>
       <div id="clear-message" class="run-overlay-message cleared">CLEAR</div>
       <div id="clear-time" class="run-overlay-time"></div>
+      <div id="clear-best" class="run-overlay-best"></div>
       <button id="clear-save" class="run-overlay-button secondary" type="button" hidden>動画を保存</button>
       <button id="clear-retry" class="run-overlay-button" type="button">RETRY</button>
     </div>
+
+    <button id="mode-back" class="back-button" type="button"></button>
+
+    <div id="menu-screen" class="screen">
+      <h1 class="menu-title">Font AR</h1>
+      <p class="menu-lead">文字の上を、はみ出さないように棒で進もう</p>
+      <button id="menu-single" class="menu-button" type="button">
+        シングルモード<span>好きな文字を置いて自由に遊ぶ</span>
+      </button>
+      <button id="menu-community" class="menu-button" type="button">
+        コミュニティモード<span>コースを作って共有・挑戦する</span>
+      </button>
+    </div>
+
+    <div id="hub-screen" class="screen" hidden>
+      <div class="screen-header">
+        <button id="hub-back" class="back-button inline" type="button">← 戻る</button>
+        <h2>コミュニティ</h2>
+      </div>
+      <div class="tabs" role="tablist">
+        <button id="tab-created" class="tab active" type="button" role="tab" aria-selected="true">作ったコース</button>
+        <button id="tab-played" class="tab" type="button" role="tab" aria-selected="false">プレイしたコース</button>
+      </div>
+      <div class="screen-body">
+        <button id="hub-new" class="primary-button" type="button">＋ 新規作成</button>
+        <ul id="course-list" class="course-list"></ul>
+        <p id="course-empty" class="course-empty" hidden></p>
+      </div>
+    </div>
+
+    <div id="create-screen" class="screen" hidden>
+      <div class="screen-header">
+        <button id="create-cancel" class="back-button inline" type="button">← キャンセル</button>
+        <h2>新規コース</h2>
+      </div>
+      <div class="screen-body form">
+        <label>コース名（空なら文字がそのまま名前になります）
+          <input id="create-name" type="text" placeholder="例: むずかしい漢字">
+        </label>
+        <label>文字
+          <input id="create-text" type="text" placeholder="例: 回">
+        </label>
+        <label>フォント
+          <select id="create-font"></select>
+        </label>
+        <label>サイズ <output id="create-scale-value">×1</output>
+          <input id="create-scale" type="range" value="1">
+        </label>
+        <div id="create-preview" class="create-preview" aria-label="プレビュー">文字</div>
+        <button id="create-save" class="primary-button" type="button">保存</button>
+      </div>
+    </div>
+
+    <div id="toast" hidden></div>
 
     <script type="module" src="src/app.js"></script>
   </body>
